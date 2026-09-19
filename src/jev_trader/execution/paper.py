@@ -1,0 +1,177 @@
+from __future__ import annotations
+
+from jev_trader.execution.base import OrderRejected, VenueHealth
+from jev_trader.state.book import OrderBook
+from jev_trader.state.events import BlockEvent
+from jev_trader.types import Fill, Order, PnL
+
+
+class PaperVenue:
+    """In-memory venue with post-only order lifecycle and trade-through fills.
+
+    Conservative fill model: a resting order fills only when a trade prints
+    strictly through its price, and only up to the printed size. No queue
+    priority and no partial-queue modeling; a more realistic queue-position
+    model is Phase 2 in PLAN.md.
+    """
+
+    def __init__(
+        self,
+        *,
+        starting_cash: float,
+        fee_bps: float,
+        tick_size: float,
+        max_order_size: float,
+    ) -> None:
+        self._starting_cash = starting_cash
+        self._fee_rate = fee_bps / 10_000.0
+        self._tick_size = tick_size
+        self._max_order_size = max_order_size
+        self._book: OrderBook | None = None
+        self._orders: dict[str, tuple[Order, float]] = {}
+        self._fill_queue: list[Fill] = []
+        self._position = 0.0
+        self._avg_entry = 0.0
+        self._realized = 0.0
+        self._fees = 0.0
+        self._position_opened_ts: float | None = None
+        self._attempts = 0
+        self._rejects = 0
+        self._fills = 0
+        self._next_id = 0
+
+    def on_block(self, event: BlockEvent) -> None:
+        self._book = event.book
+        for trade in event.trades:
+            trade_left = trade.size
+            for oid, (order, remaining) in list(self._orders.items()):
+                if trade_left <= 0:
+                    break
+                crossed = (order.side == "buy" and trade.price < order.price) or (
+                    order.side == "sell" and trade.price > order.price
+                )
+                if not crossed:
+                    continue
+                qty = min(remaining, trade_left)
+                fee = order.price * qty * self._fee_rate
+                self._apply_fill(order.side, order.price, qty, fee)
+                self._fill_queue.append(Fill(order.side, order.price, qty, fee))
+                self._fills += 1
+                remaining -= qty
+                trade_left -= qty
+                if remaining <= 0:
+                    del self._orders[oid]
+                else:
+                    self._orders[oid] = (order, remaining)
+
+    def drain_fills(self) -> tuple[Fill, ...]:
+        fills = tuple(self._fill_queue)
+        self._fill_queue.clear()
+        return fills
+
+    def book(self) -> OrderBook:
+        if self._book is None:
+            raise RuntimeError("paper venue has not seen a block yet")
+        return self._book
+
+    def inventory(self) -> float:
+        return self._position
+
+    def equity(self) -> float:
+        return self._starting_cash + self.pnl().net
+
+    def pnl(self) -> PnL:
+        unrealized = 0.0
+        if self._position != 0 and self._book is not None:
+            unrealized = (self._book.mid - self._avg_entry) * self._position
+        return PnL(realized=self._realized, unrealized=unrealized, fees=self._fees)
+
+    def health(self) -> VenueHealth:
+        if self._attempts == 0:
+            return VenueHealth()
+        return VenueHealth(
+            fill_ratio=self._fills / self._attempts,
+            reject_rate=self._rejects / self._attempts,
+            slippage_bps=0.0,
+        )
+
+    def position_age_s(self, now: float) -> float:
+        if self._position == 0 or self._position_opened_ts is None:
+            return 0.0
+        return max(0.0, now - self._position_opened_ts)
+
+    def open_orders(self) -> tuple[Order, ...]:
+        return tuple(order for order, _ in self._orders.values())
+
+    async def cancel_all(self) -> int:
+        count = len(self._orders)
+        self._orders.clear()
+        return count
+
+    async def place(self, order: Order) -> str:
+        self._attempts += 1
+        if order.size <= 0 or order.size > self._max_order_size:
+            self._rejects += 1
+            raise OrderRejected(
+                f"size {order.size} outside (0, {self._max_order_size}]"
+            )
+        book = self.book()
+        price = round(order.price / self._tick_size) * self._tick_size
+        if order.post_only and book.two_sided:
+            if order.side == "buy" and price >= book.best_ask.price:
+                self._rejects += 1
+                raise OrderRejected("post-only buy would cross the book")
+            if order.side == "sell" and price <= book.best_bid.price:
+                self._rejects += 1
+                raise OrderRejected("post-only sell would cross the book")
+        self._next_id += 1
+        oid = f"paper-{self._next_id}"
+        self._orders[oid] = (
+            Order(side=order.side, price=price, size=order.size, post_only=order.post_only),
+            order.size,
+        )
+        return oid
+
+    async def flatten(self) -> Fill | None:
+        await self.cancel_all()
+        if self._position == 0:
+            return None
+        book = self.book()
+        if self._position > 0:
+            side, price = "sell", book.best_bid.price
+        else:
+            side, price = "buy", book.best_ask.price
+        qty = abs(self._position)
+        fee = price * qty * self._fee_rate
+        self._apply_fill(side, price, qty, fee)
+        self._fills += 1
+        return Fill(side, price, qty, fee)
+
+    def _apply_fill(self, side: str, price: float, qty: float, fee: float) -> None:
+        self._fees += fee
+        signed = qty if side == "buy" else -qty
+        if self._position == 0:
+            self._position_opened_ts = None
+        increasing = self._position == 0 or (self._position > 0) == (signed > 0)
+        if increasing:
+            new_position = self._position + signed
+            if new_position != 0:
+                self._avg_entry = (
+                    abs(self._position) * self._avg_entry + qty * price
+                ) / abs(new_position)
+            self._position = new_position
+            if self._position_opened_ts is None:
+                self._position_opened_ts = self._book.ts if self._book else 0.0
+        else:
+            closing = min(abs(signed), abs(self._position))
+            if self._position > 0:
+                self._realized += (price - self._avg_entry) * closing
+            else:
+                self._realized += (self._avg_entry - price) * closing
+            self._position += signed
+            if self._position == 0:
+                self._avg_entry = 0.0
+                self._position_opened_ts = None
+            elif abs(signed) > closing:
+                self._avg_entry = price
+                self._position_opened_ts = self._book.ts if self._book else 0.0
