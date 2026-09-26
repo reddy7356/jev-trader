@@ -1,4 +1,4 @@
-"""Record Hyperliquid L2 book + trades to JSONL for replay (public data, no key).
+"""Hyperliquid public market data (no key): a live block feed and a JSONL recorder.
 
 One line per record:
     {"kind": "book", "ts": 1790426360.809, "bids": [[px, sz], ...], "asks": [[px, sz], ...]}
@@ -10,13 +10,19 @@ One line per record:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any, TextIO
+from typing import Any
 
 import websockets
 
+from jev_trader.feeds.replay import book_from_record
+from jev_trader.state.events import BlockEvent, Trade
+
 WS_URL = "wss://api.hyperliquid.xyz/ws"
+TESTNET_WS_URL = "wss://api.hyperliquid-testnet.xyz/ws"
 _SIDES = {"B": "buy", "A": "sell"}
 
 
@@ -48,46 +54,78 @@ def to_records(message: dict[str, Any], levels: int = 10) -> list[dict[str, Any]
     return []
 
 
-async def record(coin: str, path: Path, seconds: float, levels: int = 10) -> int:
-    """Stream `coin` for `seconds` into `path`. Returns the number of books written.
-
-    Reconnects after a dropped socket; the replay just sees a longer gap between blocks.
-    """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    loop = asyncio.get_running_loop()
-    deadline = loop.time() + seconds
-    books = 0
-    with path.open("w", buffering=1) as out:
-        while deadline - loop.time() > 0:
-            try:
-                books += await _stream(coin, out, deadline, levels)
-            except (websockets.ConnectionClosed, OSError) as exc:
-                print(f"connection lost ({exc!r}); reconnecting")
-                await asyncio.sleep(2.0)
-    return books
+async def stream(
+    coin: str, url: str = WS_URL, levels: int = 10
+) -> AsyncIterator[dict[str, Any]]:
+    """Endless book + trade records for `coin`, reconnecting after a dropped socket."""
+    while True:
+        try:
+            async for rec in _stream_once(coin, url, levels):
+                yield rec
+        except (websockets.ConnectionClosed, OSError) as exc:
+            print(f"connection lost ({exc!r}); reconnecting")
+            await asyncio.sleep(2.0)
 
 
-async def _stream(coin: str, out: TextIO, deadline: float, levels: int) -> int:
-    loop = asyncio.get_running_loop()
-    books = 0
+async def _stream_once(coin: str, url: str, levels: int) -> AsyncIterator[dict[str, Any]]:
     first_book_ts: float | None = None
-    async with websockets.connect(WS_URL) as ws:
+    async with websockets.connect(url) as ws:
         # fast=True: a book every ~0.5s instead of every ~5s
         book_sub = {"type": "l2Book", "coin": coin, "fast": True}
         for sub in (book_sub, {"type": "trades", "coin": coin}):
             await ws.send(json.dumps({"method": "subscribe", "subscription": sub}))
-        while (left := deadline - loop.time()) > 0:
-            try:
-                raw = await asyncio.wait_for(ws.recv(), timeout=left)
-            except TimeoutError:
-                break
+        async for raw in ws:
             for rec in to_records(json.loads(raw), levels):
                 if rec["kind"] == "book":
-                    books += 1
-                    if first_book_ts is None:
-                        first_book_ts = rec["ts"]
+                    first_book_ts = first_book_ts or rec["ts"]
                 # each (re)subscription opens with a backlog of older trades
                 elif first_book_ts is None or rec["ts"] < first_book_ts:
                     continue
+                yield rec
+
+
+async def record(coin: str, path: Path, seconds: float, levels: int = 10) -> int:
+    """Stream `coin` for `seconds` into `path`. Returns the number of books written."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    books = 0
+
+    async def write_all() -> None:
+        nonlocal books
+        with path.open("w", buffering=1) as out:
+            async for rec in stream(coin, levels=levels):
+                books += rec["kind"] == "book"
                 out.write(json.dumps(rec) + "\n")
+
+    with contextlib.suppress(TimeoutError):
+        await asyncio.wait_for(write_all(), timeout=seconds)
     return books
+
+
+class HyperliquidFeed:
+    """Live blocks: one per book snapshot, with the trades printed since the previous one."""
+
+    def __init__(self, coin: str, *, testnet: bool = True, max_blocks: int | None = None) -> None:
+        self._coin = coin
+        self._url = TESTNET_WS_URL if testnet else WS_URL
+        self._max_blocks = max_blocks
+
+    async def events(self) -> AsyncIterator[BlockEvent]:
+        block = 0
+        pending: list[Trade] = []
+        async for rec in stream(self._coin, self._url):
+            if rec["kind"] == "trade":
+                pending.append(
+                    Trade(ts=rec["ts"], price=rec["px"], size=rec["sz"], side=rec["side"])
+                )
+                continue
+            if self._max_blocks is not None and block >= self._max_blocks:
+                return
+            yield BlockEvent(
+                block=block,
+                ts=rec["ts"],
+                book=book_from_record(rec, rec["ts"]),
+                trades=tuple(pending),
+                book_updates=1,
+            )
+            pending = []
+            block += 1

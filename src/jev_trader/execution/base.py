@@ -20,7 +20,16 @@ class VenueHealth:
 
 
 class VenueAdapter(Protocol):
+    """What the loop needs from a venue.
+
+    Per block the loop calls `on_block` (new market data), then `await sync()`
+    (pull fills, position and open orders from the venue), then reads state
+    through the plain getters, which must answer from local state without IO.
+    """
+
     def on_block(self, event: BlockEvent) -> None: ...
+
+    async def sync(self) -> None: ...
 
     def drain_fills(self) -> tuple[Fill, ...]: ...
 

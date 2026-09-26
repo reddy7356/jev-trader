@@ -203,6 +203,7 @@ class TradingLoop:
         stats.blocks += 1
 
         self._venue.on_block(event)
+        await self._venue.sync()
         fills = self._venue.drain_fills()
         stats.fills += len(fills)
         if event.book.two_sided:

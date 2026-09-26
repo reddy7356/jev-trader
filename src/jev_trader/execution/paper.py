@@ -113,6 +113,9 @@ class PaperVenue:
             if rest.dies_at <= event.ts:
                 del self._orders[oid]
 
+    async def sync(self) -> None:
+        """Nothing to pull: the paper venue's state is already local."""
+
     def drain_fills(self) -> tuple[Fill, ...]:
         fills = tuple(self._fill_queue)
         self._fill_queue.clear()

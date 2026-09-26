@@ -10,6 +10,14 @@ from jev_trader.state.book import Level, OrderBook
 from jev_trader.state.events import BlockEvent, Trade
 
 
+def book_from_record(rec: dict, ts: float) -> OrderBook:
+    return OrderBook(
+        ts=ts,
+        bids=tuple(Level(px, sz) for px, sz in rec["bids"]),
+        asks=tuple(Level(px, sz) for px, sz in rec["asks"]),
+    )
+
+
 class ReplayFeed:
     """Replays a recorded book + trades JSONL (see feeds/hyperliquid.py) as blocks.
 
@@ -48,12 +56,13 @@ class ReplayFeed:
                 return
             if self._realtime and last_ts is not None:
                 await asyncio.sleep(max(0.0, ts - last_ts))
-            book = OrderBook(
+            yield BlockEvent(
+                block=block,
                 ts=ts,
-                bids=tuple(Level(px, sz) for px, sz in rec["bids"]),
-                asks=tuple(Level(px, sz) for px, sz in rec["asks"]),
+                book=book_from_record(rec, ts),
+                trades=tuple(pending),
+                book_updates=1,
             )
-            yield BlockEvent(block=block, ts=ts, book=book, trades=tuple(pending), book_updates=1)
             pending = []
             last_ts = ts
             block += 1
