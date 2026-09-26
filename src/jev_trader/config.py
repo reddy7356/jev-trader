@@ -65,6 +65,8 @@ class Settings(BaseSettings):
     log_path: Path = Path("data/calibration.jsonl")
     starting_cash: float = 10_000.0
     fee_bps: float = 1.0
+    order_ack_ms: float = 0.0
+    cancel_ms: float = 0.0
 
     risk: RiskConfig = Field(default_factory=RiskConfig)
     policy: PolicyConfig = Field(default_factory=PolicyConfig)

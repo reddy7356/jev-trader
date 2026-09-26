@@ -1,9 +1,21 @@
 from __future__ import annotations
 
+import math
+from dataclasses import dataclass
+
 from jev_trader.domain import Fill, Order, PnL
 from jev_trader.execution.base import OrderRejected, VenueHealth
 from jev_trader.state.book import OrderBook
 from jev_trader.state.events import BlockEvent
+
+
+@dataclass(slots=True)
+class _Resting:
+    order: Order
+    remaining: float
+    ahead: float  # size queued ahead of us at our price
+    live_at: float  # placement time + ack latency
+    dies_at: float = math.inf  # cancel time + cancel latency
 
 
 class PaperVenue:
@@ -14,8 +26,14 @@ class PaperVenue:
     (the touch) must first consume the size queued ahead; only the remainder
     fills us. Every trade fills at most its printed size.
 
+    Latency: a new order goes live `ack_ms` after placement, and a cancel takes
+    `cancel_ms` to land. A trade fills only orders live at the trade's timestamp,
+    so a quote cancelled just before a price jump can still be picked off.
+
     ponytail: queue ahead only shrinks by trades, never by cancellations ahead,
     so fills are conservative; model cancel-driven queue decay if fills look too rare.
+    ponytail: post-only is checked at submit, not re-checked on arrival; a late
+    order that would cross fills as a trade-through (pessimistic).
     """
 
     def __init__(
@@ -25,14 +43,18 @@ class PaperVenue:
         fee_bps: float,
         tick_size: float,
         max_order_size: float,
+        ack_ms: float = 0.0,
+        cancel_ms: float = 0.0,
     ) -> None:
         self._starting_cash = starting_cash
         self._fee_rate = fee_bps / 10_000.0
         self._tick_size = tick_size
         self._max_order_size = max_order_size
+        self._ack_s = ack_ms / 1000.0
+        self._cancel_s = cancel_ms / 1000.0
+        self._now = 0.0
         self._book: OrderBook | None = None
-        # order id -> (order, remaining size, size queued ahead of us at our price)
-        self._orders: dict[str, tuple[Order, float, float]] = {}
+        self._orders: dict[str, _Resting] = {}
         self._fill_queue: list[Fill] = []
         self._position = 0.0
         self._avg_entry = 0.0
@@ -46,11 +68,15 @@ class PaperVenue:
 
     def on_block(self, event: BlockEvent) -> None:
         self._book = event.book
+        self._now = event.ts
         for trade in event.trades:
             trade_left = trade.size
-            for oid, (order, remaining, ahead) in list(self._orders.items()):
+            for oid, rest in list(self._orders.items()):
                 if trade_left <= 0:
                     break
+                if not rest.live_at <= trade.ts < rest.dies_at:
+                    continue
+                order = rest.order
                 # half-tick tolerance: prices are floats, 99.99 may be stored as 99.99000000000001
                 half_tick = self._tick_size / 2
                 through = (order.side == "buy" and trade.price < order.price - half_tick) or (
@@ -59,25 +85,25 @@ class PaperVenue:
                 # a sell aggressor hits resting bids; a buy aggressor lifts resting asks
                 at_touch = abs(trade.price - order.price) < half_tick and trade.side != order.side
                 if at_touch and not through:
-                    eaten = min(ahead, trade_left)
-                    ahead -= eaten
+                    eaten = min(rest.ahead, trade_left)
+                    rest.ahead -= eaten
                     trade_left -= eaten
                 elif not through:
                     continue
-                qty = min(remaining, trade_left)
+                qty = min(rest.remaining, trade_left)
                 if qty <= 0:
-                    self._orders[oid] = (order, remaining, ahead)
                     continue
                 fee = order.price * qty * self._fee_rate
                 self._apply_fill(order.side, order.price, qty, fee)
                 self._fill_queue.append(Fill(order.side, order.price, qty, fee))
                 self._fills += 1
-                remaining -= qty
+                rest.remaining -= qty
                 trade_left -= qty
-                if remaining <= 0:
+                if rest.remaining <= 0:
                     del self._orders[oid]
-                else:
-                    self._orders[oid] = (order, remaining, ahead)
+        for oid, rest in list(self._orders.items()):
+            if rest.dies_at <= event.ts:
+                del self._orders[oid]
 
     def drain_fills(self) -> tuple[Fill, ...]:
         fills = tuple(self._fill_queue)
@@ -116,12 +142,16 @@ class PaperVenue:
         return max(0.0, now - self._position_opened_ts)
 
     def open_orders(self) -> tuple[Order, ...]:
-        return tuple(order for order, _, _ in self._orders.values())
+        return tuple(r.order for r in self._orders.values() if r.dies_at == math.inf)
 
     async def cancel_all(self) -> int:
-        count = len(self._orders)
-        self._orders.clear()
-        return count
+        """Cancel every open order; each stays fillable until its cancel lands."""
+        pending = [r for r in self._orders.values() if r.dies_at == math.inf]
+        if self._cancel_s == 0:
+            self._orders = {oid: r for oid, r in self._orders.items() if r.dies_at != math.inf}
+        for rest in pending:
+            rest.dies_at = self._now + self._cancel_s
+        return len(pending)
 
     async def place(self, order: Order) -> str:
         self._attempts += 1
@@ -145,10 +175,11 @@ class PaperVenue:
         )
         self._next_id += 1
         oid = f"paper-{self._next_id}"
-        self._orders[oid] = (
-            Order(side=order.side, price=price, size=order.size, post_only=order.post_only),
-            order.size,
-            ahead,
+        self._orders[oid] = _Resting(
+            order=Order(side=order.side, price=price, size=order.size, post_only=order.post_only),
+            remaining=order.size,
+            ahead=ahead,
+            live_at=self._now + self._ack_s,
         )
         return oid
 

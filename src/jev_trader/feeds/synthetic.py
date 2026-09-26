@@ -67,7 +67,7 @@ class SyntheticFeed:
             ret = rng.gauss(drift, vol)
             mid = max(mid * (1.0 + ret), self._tick * 10)
             book = self._make_book(rng, mid)
-            trades = self._make_trades(rng, book, ret)
+            trades = self._make_trades(rng, book, ret, ts)
 
             yield BlockEvent(
                 block=block,
@@ -110,12 +110,14 @@ class SyntheticFeed:
         rng: random.Random,
         book: OrderBook,
         block_return: float,
+        ts: float,
     ) -> tuple[Trade, ...]:
         if rng.random() < 0.3:
             return ()
         count = rng.randint(1, 3)
+        block_s = self._block_ms / 1000.0
         trades = []
-        for _ in range(count):
+        for i in range(count):
             aligned = rng.random() < 0.7
             if block_return == 0.0:
                 side = "buy" if rng.random() < 0.5 else "sell"
@@ -126,7 +128,8 @@ class SyntheticFeed:
             price = book.best_ask.price if side == "buy" else book.best_bid.price
             trades.append(
                 Trade(
-                    ts=0.0,
+                    # spread evenly over the interval since the previous block
+                    ts=ts - block_s + (i + 1) / (count + 1) * block_s,
                     price=price,
                     size=self._base_size * (0.2 + rng.random()),
                     side=side,

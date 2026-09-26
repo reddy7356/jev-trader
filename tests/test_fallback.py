@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from jev_trader.config import PolicyConfig
 from jev_trader.judgment.fallback import HeuristicJudge
 
 
@@ -29,3 +30,12 @@ async def test_inventory_pressure_scales_with_position(make_state):
     loaded = await judge.judge(make_state(inventory=100.0))
     assert flat.inventory_pressure == 0.0
     assert loaded.inventory_pressure == pytest.approx(3.0)
+
+
+async def test_toxic_flow_tracks_one_sidedness_not_busyness(make_state):
+    judge = HeuristicJudge(max_position=100.0)
+    busy_balanced = await judge.judge(make_state(aggressive_buy_ratio=0.5, trade_intensity=50.0))
+    one_sided = await judge.judge(make_state(aggressive_buy_ratio=0.9))
+    pull = PolicyConfig().toxic_pull
+    assert busy_balanced.toxic_flow < pull
+    assert one_sided.toxic_flow > pull

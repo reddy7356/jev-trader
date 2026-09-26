@@ -81,11 +81,11 @@ class HeuristicJudge:
         return {name: value / total for name, value in raw.items()}
 
     def _toxic_flow(self, state: MarketState) -> float:
-        return _clip(
-            0.5 + 0.4 * abs(state.imbalance) + 0.3 * math.log1p(state.trade_intensity),
-            0.0,
-            1.0,
-        )
+        # informed flow is one-sided: aggressive buys and sells far from 50/50.
+        # ponytail: raw trade intensity was dropped (no recent-norm baseline in state);
+        # add intensity-vs-norm when the snapshot carries one.
+        one_sided = abs(2.0 * state.aggressive_buy_ratio - 1.0)
+        return _clip(0.5 + 0.4 * abs(state.imbalance) + 0.5 * one_sided, 0.0, 1.0)
 
     def _liquidity_stressed(self, state: MarketState) -> float:
         stress = 0.35 * max(0.0, state.vol_ratio - 1.0) + 0.05 * state.spread_bps

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from jev_trader.feeds.synthetic import SyntheticFeed
 from jev_trader.state.events import Trade
 from jev_trader.state.features import FeatureEngine
 
@@ -42,3 +43,13 @@ def test_no_trades_is_neutral(make_event):
     features = engine.update(make_event())
     assert features.aggressive_buy_ratio == 0.5
     assert features.trade_intensity == 0.0
+
+
+async def test_synthetic_trades_are_timestamped_inside_their_block():
+    engine = FeatureEngine()
+    saw_flow = False
+    async for event in SyntheticFeed(seed=1, block_ms=300, max_blocks=50).events():
+        for trade in event.trades:
+            assert event.ts - 0.3 < trade.ts <= event.ts
+        saw_flow |= engine.update(event).trade_intensity > 0
+    assert saw_flow

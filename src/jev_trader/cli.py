@@ -40,6 +40,8 @@ def _build_parser() -> argparse.ArgumentParser:
     paper.add_argument("--realtime", action="store_true", help="pace blocks in real time")
     paper.add_argument("--log", type=Path, default=None)
     paper.add_argument("--no-log", action="store_true")
+    paper.add_argument("--ack-ms", type=float, default=None, help="simulated order ack latency")
+    paper.add_argument("--cancel-ms", type=float, default=None, help="simulated cancel latency")
     paper.add_argument(
         "--live-only",
         action="store_true",
@@ -84,6 +86,8 @@ async def _run_paper(args: argparse.Namespace) -> int:
         fee_bps=settings.fee_bps,
         tick_size=settings.pricing.tick_size,
         max_order_size=settings.risk.max_order_size,
+        ack_ms=args.ack_ms if args.ack_ms is not None else settings.order_ack_ms,
+        cancel_ms=args.cancel_ms if args.cancel_ms is not None else settings.cancel_ms,
     )
     log_path = args.log if args.log is not None else settings.log_path
     calibration = CalibrationLogger(log_path, enabled=not args.no_log)

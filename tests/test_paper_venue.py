@@ -144,3 +144,32 @@ async def test_improving_the_price_puts_us_first_in_queue(make_event):
     fills = venue.drain_fills()
     assert len(fills) == 1
     assert fills[0].size == pytest.approx(2.0)
+
+
+async def test_order_is_not_live_until_acked(make_event):
+    venue = make_venue(ack_ms=500.0)
+    venue.on_block(make_event(ts=0.0))
+    await venue.place(Order(side="buy", price=99.98, size=5.0))
+    early = Trade(ts=0.3, price=99.97, size=2.0, side="sell")
+    late = Trade(ts=0.9, price=99.97, size=2.0, side="sell")
+    venue.on_block(make_event(block=1, ts=1.0, trades=(early, late)))
+    fills = venue.drain_fills()
+    assert len(fills) == 1
+    assert fills[0].size == pytest.approx(2.0)
+
+
+async def test_cancelled_quote_can_be_picked_off_before_cancel_lands(make_event):
+    venue = make_venue(cancel_ms=200.0)
+    venue.on_block(make_event(ts=0.0))
+    await venue.place(Order(side="buy", price=99.98, size=5.0))
+    assert await venue.cancel_all() == 1
+    assert venue.open_orders() == ()
+
+    in_flight = Trade(ts=0.1, price=99.90, size=2.0, side="sell")
+    after = Trade(ts=0.5, price=99.90, size=2.0, side="sell")
+    venue.on_block(make_event(block=1, ts=1.0, mid=99.9, trades=(in_flight, after)))
+    fills = venue.drain_fills()
+    assert len(fills) == 1
+    assert fills[0].price == pytest.approx(99.98)
+    assert venue.inventory() == pytest.approx(2.0)
+    assert await venue.cancel_all() == 0
