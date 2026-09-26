@@ -84,7 +84,12 @@ inside the block budget, cost per block measured.
 - [ ] Historical L2 replay feed (recorded book + trades)
 - [x] Adverse-selection metrics: markout at 1/5/10/30 blocks after each fill
       — `markout_bps`/`markout_usd` in the summary; baseline is ~-7 bps already at fill time (stale quotes)
-- [ ] Spread/time-in-book tuning: widen, rest longer, or find directional edge
+- [x] Spread/time-in-book tuning: widen, rest longer, or find directional edge
+      — `scripts/sweep.py`; quotes now rest until the target moves > `requote_ticks`.
+        Result (synthetic feed, 150ms latency, $0.01 gas, 3 seeds x 10k blocks):
+        every setting loses; best is 40 bps half-spread + requote 5 ticks at -$189.
+        Markout at fill is -12..-16 bps everywhere: synthetic trades print only at the
+        touch, so we fill only when price runs through us. Verdict needs item 4 (real data).
 
 **Acceptance:** simulated cancel-replace cost model reproduces the structural-loss
 result from the article's critique; a configuration with positive net edge exists

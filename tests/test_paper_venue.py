@@ -40,7 +40,7 @@ async def test_post_only_rejects_crossing_order(make_event):
     venue.on_block(make_event())
     with pytest.raises(OrderRejected):
         await venue.place(Order(side="buy", price=100.05, size=1.0))
-    assert venue.open_orders() == ()
+    assert venue.open_orders() == {}
     assert venue.health().reject_rate == pytest.approx(1.0)
 
 
@@ -84,7 +84,7 @@ async def test_flatten_closes_inventory_at_touch(make_event):
     assert fill is not None
     assert fill.side == "sell"
     assert venue.inventory() == pytest.approx(0.0)
-    assert venue.open_orders() == ()
+    assert venue.open_orders() == {}
 
 
 async def test_cancel_all_removes_orders(make_event):
@@ -95,7 +95,7 @@ async def test_cancel_all_removes_orders(make_event):
     assert len(venue.open_orders()) == 2
     cancelled = await venue.cancel_all()
     assert cancelled == 2
-    assert venue.open_orders() == ()
+    assert venue.open_orders() == {}
 
 
 async def test_fees_are_charged(make_event):
@@ -163,7 +163,7 @@ async def test_cancelled_quote_can_be_picked_off_before_cancel_lands(make_event)
     venue.on_block(make_event(ts=0.0))
     await venue.place(Order(side="buy", price=99.98, size=5.0))
     assert await venue.cancel_all() == 1
-    assert venue.open_orders() == ()
+    assert venue.open_orders() == {}
 
     in_flight = Trade(ts=0.1, price=99.90, size=2.0, side="sell")
     after = Trade(ts=0.5, price=99.90, size=2.0, side="sell")

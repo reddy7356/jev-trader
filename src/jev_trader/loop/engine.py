@@ -308,9 +308,39 @@ class TradingLoop:
         return action, judgments, judgments.source, latency_ms
 
     async def _execute(self, action: Action, state: MarketState, reduce_only: bool) -> None:
-        await self._venue.cancel_all()
+        await self._reconcile(self._target_orders(action, state, reduce_only))
+
+    async def _reconcile(self, targets: list[Order]) -> None:
+        """Leave resting quotes that are still on target; cancel the rest, place what's missing.
+
+        Keeping an unchanged quote preserves queue position and saves a cancel and a place.
+        ponytail: size changes alone don't trigger a requote; the resting size stays.
+        """
+        pricing = self._settings.pricing
+        tolerance = (pricing.requote_ticks + 0.5) * pricing.tick_size
+        missing = list(targets)
+        for oid, resting in self._venue.open_orders().items():
+            match = next(
+                (
+                    t
+                    for t in missing
+                    if t.side == resting.side and abs(t.price - resting.price) < tolerance
+                ),
+                None,
+            )
+            if match is None:
+                await self._venue.cancel(oid)
+            else:
+                missing.remove(match)
+        for order in missing:
+            try:
+                await self._venue.place(order)
+            except OrderRejected:
+                self._stats.rejects += 1
+
+    def _target_orders(self, action: Action, state: MarketState, reduce_only: bool) -> list[Order]:
         if action.kind not in QUOTING_ACTIONS:
-            return
+            return []
         if action.kind in (ActionKind.QUOTE_WIDE, ActionKind.WIDEN):
             multiplier = self._settings.policy.wide_spread_multiplier
         else:
@@ -330,17 +360,13 @@ class TradingLoop:
         )
         size = self._settings.risk.max_order_size * action.size_scale
         if size <= 0:
-            return
+            return []
         orders: list[Order] = []
         if not reduce_only or state.inventory < 0:
             orders.append(Order(side="buy", price=quote.bid, size=size))
         if not reduce_only or state.inventory > 0:
             orders.append(Order(side="sell", price=quote.ask, size=size))
-        for order in orders:
-            try:
-                await self._venue.place(order)
-            except OrderRejected:
-                self._stats.rejects += 1
+        return orders
 
     def _label_matured(self, block: int, mid: float) -> None:
         if self._calibration is None:

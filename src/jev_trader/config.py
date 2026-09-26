@@ -45,6 +45,8 @@ class PricingConfig(BaseModel):
     horizon_s: float = 60.0
     min_half_spread_bps: float = 1.0
     tick_size: float = 0.01
+    # keep a resting quote if the new target price is within this many ticks
+    requote_ticks: float = 0.0
 
 
 class Settings(BaseSettings):

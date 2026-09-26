@@ -149,19 +149,24 @@ class PaperVenue:
             return 0.0
         return max(0.0, now - self._position_opened_ts)
 
-    def open_orders(self) -> tuple[Order, ...]:
-        return tuple(r.order for r in self._orders.values() if r.dies_at == math.inf)
+    def open_orders(self) -> dict[str, Order]:
+        return {oid: r.order for oid, r in self._orders.items() if r.dies_at == math.inf}
+
+    async def cancel(self, oid: str) -> bool:
+        """Cancel one order; it stays fillable until the cancel lands."""
+        rest = self._orders.get(oid)
+        if rest is None or rest.dies_at != math.inf:
+            return False
+        # ponytail: one cancel tx per order; model batch cancel if the target venue has one
+        self._gas += self._gas_per_cancel
+        if self._cancel_s == 0:
+            del self._orders[oid]
+        else:
+            rest.dies_at = self._now + self._cancel_s
+        return True
 
     async def cancel_all(self) -> int:
-        """Cancel every open order; each stays fillable until its cancel lands."""
-        pending = [r for r in self._orders.values() if r.dies_at == math.inf]
-        # ponytail: one cancel tx per order; model batch cancel if the target venue has one
-        self._gas += self._gas_per_cancel * len(pending)
-        if self._cancel_s == 0:
-            self._orders = {oid: r for oid, r in self._orders.items() if r.dies_at != math.inf}
-        for rest in pending:
-            rest.dies_at = self._now + self._cancel_s
-        return len(pending)
+        return sum([await self.cancel(oid) for oid in list(self.open_orders())])
 
     async def place(self, order: Order) -> str:
         self._attempts += 1

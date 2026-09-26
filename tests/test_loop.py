@@ -6,7 +6,7 @@ import pytest
 
 from jev_trader.calibration.log import CalibrationLogger
 from jev_trader.config import RiskConfig, Settings
-from jev_trader.domain import Fill, JudgmentSet
+from jev_trader.domain import Fill, JudgmentSet, Order
 from jev_trader.execution.paper import PaperVenue
 from jev_trader.feeds.synthetic import SyntheticFeed
 from jev_trader.judgment.fallback import HeuristicJudge
@@ -182,3 +182,31 @@ def test_markouts_sign_moves_from_our_side_of_the_trade():
     assert summary["markout_bps"]["0b"] > 0 > summary["markout_bps"]["2b"]
     tracker.on_block(3, 50.0)
     assert tracker.pnl[2] == pytest.approx(2 * (99.90 - 99.99) + 1 * (100.01 - 99.90))
+
+
+async def test_reconcile_keeps_quotes_that_are_still_on_target(tmp_path, make_event):
+    settings = Settings(log_path=tmp_path / "cal.jsonl")
+    loop, _ = build_loop(tmp_path, blocks=1, settings=settings)
+    venue = PaperVenue(
+        starting_cash=1000.0,
+        fee_bps=0.0,
+        tick_size=0.01,
+        max_order_size=25.0,
+        gas_per_place=1.0,
+        gas_per_cancel=10.0,
+    )
+    loop._venue = venue
+    venue.on_block(make_event())
+    bid = Order(side="buy", price=99.98, size=1.0)
+    ask = Order(side="sell", price=100.02, size=1.0)
+
+    await loop._reconcile([bid, ask])
+    await loop._reconcile([bid, ask])  # unchanged: nothing sent
+    assert venue.pnl().gas == pytest.approx(2.0)
+
+    await loop._reconcile([Order(side="buy", price=99.97, size=1.0), ask])  # bid moved
+    assert venue.pnl().gas == pytest.approx(2.0 + 10.0 + 1.0)
+    assert sorted(o.price for o in venue.open_orders().values()) == [99.97, 100.02]
+
+    await loop._reconcile([])  # stand down: cancel both
+    assert venue.open_orders() == {}
