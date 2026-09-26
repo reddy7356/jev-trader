@@ -26,6 +26,9 @@ class PaperVenue:
     (the touch) must first consume the size queued ahead; only the remainder
     fills us. Every trade fills at most its printed size.
 
+    Gas: every order submission costs `gas_per_place` and every cancelled order
+    costs `gas_per_cancel`, charged whether or not anything fills.
+
     Latency: a new order goes live `ack_ms` after placement, and a cancel takes
     `cancel_ms` to land. A trade fills only orders live at the trade's timestamp,
     so a quote cancelled just before a price jump can still be picked off.
@@ -45,6 +48,8 @@ class PaperVenue:
         max_order_size: float,
         ack_ms: float = 0.0,
         cancel_ms: float = 0.0,
+        gas_per_place: float = 0.0,
+        gas_per_cancel: float = 0.0,
     ) -> None:
         self._starting_cash = starting_cash
         self._fee_rate = fee_bps / 10_000.0
@@ -52,6 +57,9 @@ class PaperVenue:
         self._max_order_size = max_order_size
         self._ack_s = ack_ms / 1000.0
         self._cancel_s = cancel_ms / 1000.0
+        self._gas_per_place = gas_per_place
+        self._gas_per_cancel = gas_per_cancel
+        self._gas = 0.0
         self._now = 0.0
         self._book: OrderBook | None = None
         self._orders: dict[str, _Resting] = {}
@@ -125,7 +133,7 @@ class PaperVenue:
         unrealized = 0.0
         if self._position != 0 and self._book is not None:
             unrealized = (self._book.mid - self._avg_entry) * self._position
-        return PnL(realized=self._realized, unrealized=unrealized, fees=self._fees)
+        return PnL(realized=self._realized, unrealized=unrealized, fees=self._fees, gas=self._gas)
 
     def health(self) -> VenueHealth:
         if self._attempts == 0:
@@ -147,6 +155,8 @@ class PaperVenue:
     async def cancel_all(self) -> int:
         """Cancel every open order; each stays fillable until its cancel lands."""
         pending = [r for r in self._orders.values() if r.dies_at == math.inf]
+        # ponytail: one cancel tx per order; model batch cancel if the target venue has one
+        self._gas += self._gas_per_cancel * len(pending)
         if self._cancel_s == 0:
             self._orders = {oid: r for oid, r in self._orders.items() if r.dies_at != math.inf}
         for rest in pending:
@@ -160,6 +170,8 @@ class PaperVenue:
             raise OrderRejected(
                 f"size {order.size} outside (0, {self._max_order_size}]"
             )
+        # submitted on-chain from here: a post-only reject still burns gas
+        self._gas += self._gas_per_place
         book = self.book()
         price = round(order.price / self._tick_size) * self._tick_size
         if order.post_only and book.two_sided:
@@ -194,6 +206,7 @@ class PaperVenue:
             side, price = "buy", book.best_ask.price
         qty = abs(self._position)
         fee = price * qty * self._fee_rate
+        self._gas += self._gas_per_place
         self._apply_fill(side, price, qty, fee)
         self._fills += 1
         return Fill(side, price, qty, fee)

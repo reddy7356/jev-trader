@@ -173,3 +173,19 @@ async def test_cancelled_quote_can_be_picked_off_before_cancel_lands(make_event)
     assert fills[0].price == pytest.approx(99.98)
     assert venue.inventory() == pytest.approx(2.0)
     assert await venue.cancel_all() == 0
+
+
+async def test_gas_is_charged_per_place_and_cancel_even_without_fills(make_event):
+    venue = make_venue(gas_per_place=0.02, gas_per_cancel=0.01)
+    venue.on_block(make_event())
+    for _ in range(3):  # cancel-replace both sides, three blocks in a row
+        await venue.cancel_all()
+        await venue.place(Order(side="buy", price=99.98, size=1.0))
+        await venue.place(Order(side="sell", price=100.02, size=1.0))
+    with pytest.raises(OrderRejected):
+        await venue.place(Order(side="buy", price=100.05, size=1.0))
+
+    assert venue.drain_fills() == ()
+    # 7 submissions (incl. the post-only reject) and 4 cancelled orders
+    assert venue.pnl().gas == pytest.approx(7 * 0.02 + 4 * 0.01)
+    assert venue.equity() == pytest.approx(1000.0 - 0.18)

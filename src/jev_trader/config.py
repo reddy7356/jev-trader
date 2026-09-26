@@ -67,6 +67,8 @@ class Settings(BaseSettings):
     fee_bps: float = 1.0
     order_ack_ms: float = 0.0
     cancel_ms: float = 0.0
+    gas_per_place: float = 0.0
+    gas_per_cancel: float = 0.0
 
     risk: RiskConfig = Field(default_factory=RiskConfig)
     policy: PolicyConfig = Field(default_factory=PolicyConfig)

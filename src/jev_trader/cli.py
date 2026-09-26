@@ -42,6 +42,8 @@ def _build_parser() -> argparse.ArgumentParser:
     paper.add_argument("--no-log", action="store_true")
     paper.add_argument("--ack-ms", type=float, default=None, help="simulated order ack latency")
     paper.add_argument("--cancel-ms", type=float, default=None, help="simulated cancel latency")
+    paper.add_argument("--gas-place", type=float, default=None, help="$ gas per order placed")
+    paper.add_argument("--gas-cancel", type=float, default=None, help="$ gas per order cancelled")
     paper.add_argument(
         "--live-only",
         action="store_true",
@@ -88,6 +90,10 @@ async def _run_paper(args: argparse.Namespace) -> int:
         max_order_size=settings.risk.max_order_size,
         ack_ms=args.ack_ms if args.ack_ms is not None else settings.order_ack_ms,
         cancel_ms=args.cancel_ms if args.cancel_ms is not None else settings.cancel_ms,
+        gas_per_place=args.gas_place if args.gas_place is not None else settings.gas_per_place,
+        gas_per_cancel=(
+            args.gas_cancel if args.gas_cancel is not None else settings.gas_per_cancel
+        ),
     )
     log_path = args.log if args.log is not None else settings.log_path
     calibration = CalibrationLogger(log_path, enabled=not args.no_log)

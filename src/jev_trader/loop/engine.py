@@ -37,6 +37,7 @@ class LoopStats:
     rejects: int = 0
     fills: int = 0
     fees: float = 0.0
+    gas: float = 0.0
     model_mismatches: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
@@ -85,6 +86,7 @@ class LoopStats:
             "realized": round(self.realized, 4),
             "unrealized": round(self.unrealized, 4),
             "fees": round(self.fees, 4),
+            "gas": round(self.gas, 4),
             "equity": round(self.equity, 4),
         }
 
@@ -135,6 +137,7 @@ class TradingLoop:
             self._stats.realized = pnl.realized
             self._stats.unrealized = pnl.unrealized
             self._stats.fees = pnl.fees
+            self._stats.gas = pnl.gas
             self._stats.equity = self._venue.equity()
         return self._stats
 

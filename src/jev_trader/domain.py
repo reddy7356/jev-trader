@@ -69,7 +69,8 @@ class PnL:
     realized: float = 0.0
     unrealized: float = 0.0
     fees: float = 0.0
+    gas: float = 0.0
 
     @property
     def net(self) -> float:
-        return self.realized + self.unrealized - self.fees
+        return self.realized + self.unrealized - self.fees - self.gas

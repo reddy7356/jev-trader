@@ -79,7 +79,8 @@ inside the block budget, cost per block measured.
 
 - [x] Queue-position fill model (trade-through fills outright; touch fills only after the queue ahead is consumed)
 - [x] Latency simulation: order ack + cancel/replace round trip (`--ack-ms`, `--cancel-ms`)
-- [ ] Gas / fee model for cancel-replace every block (the "gas honesty check")
+- [x] Gas / fee model for cancel-replace every block (the "gas honesty check")
+      — `--gas-place`, `--gas-cancel`; 2000 blocks = ~1.5k txs; realized PnL is negative even at $0 gas
 - [ ] Historical L2 replay feed (recorded book + trades)
 - [ ] Adverse-selection metrics: markout at 1/5/10/30 blocks after each fill
 - [ ] Spread/time-in-book tuning: widen, rest longer, or find directional edge
