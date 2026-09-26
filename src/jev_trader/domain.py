@@ -32,6 +32,8 @@ class JudgmentSet:
     latency_ms: float = 0.0
     request_id: str | None = None
     source: str = "fallback"
+    input_tokens: int = 0
+    output_tokens: int = 0
 
     @property
     def p_up(self) -> float:

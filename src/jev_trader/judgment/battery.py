@@ -72,6 +72,10 @@ def parse_response(response: Any, *, latency_ms: float, source: str = "jev") -> 
     except Exception:
         request_id = None
 
+    usage = getattr(response, "usage", None)
+    input_tokens = (usage.input_tokens or 0) if usage is not None else 0
+    output_tokens = (usage.output_tokens or 0) if usage is not None else 0
+
     return JudgmentSet(
         regime=regime.choice,
         regime_confidence=regime.confidence,
@@ -89,4 +93,6 @@ def parse_response(response: Any, *, latency_ms: float, source: str = "jev") -> 
         latency_ms=latency_ms,
         request_id=request_id,
         source=source,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
     )

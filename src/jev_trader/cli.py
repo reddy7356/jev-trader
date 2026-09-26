@@ -40,6 +40,11 @@ def _build_parser() -> argparse.ArgumentParser:
     paper.add_argument("--realtime", action="store_true", help="pace blocks in real time")
     paper.add_argument("--log", type=Path, default=None)
     paper.add_argument("--no-log", action="store_true")
+    paper.add_argument(
+        "--live-only",
+        action="store_true",
+        help="require a TypeSafe key; on Jev errors hold instead of using heuristics",
+    )
 
     calibrate = sub.add_parser("calibrate", help="calibration report from logged triples")
     calibrate.add_argument("--log", type=Path, default=None)
@@ -84,6 +89,10 @@ async def _run_paper(args: argparse.Namespace) -> int:
     calibration = CalibrationLogger(log_path, enabled=not args.no_log)
     fallback = HeuristicJudge(max_position=settings.risk.max_position)
 
+    if args.live_only and not settings.has_api_key:
+        print("--live-only needs TYPESAFE_API_KEY")
+        return 1
+
     async with AsyncExitStack() as stack:
         if settings.has_api_key:
             judge = await stack.enter_async_context(JevClient(settings))
@@ -99,6 +108,7 @@ async def _run_paper(args: argparse.Namespace) -> int:
             fallback=fallback,
             settings=settings,
             calibration=calibration,
+            allow_fallback=not args.live_only,
         )
         stats = await loop.run()
 
@@ -157,6 +167,10 @@ def _run_models() -> int:
     for model in models.models:
         print(f"{model.name:24s} {model.release_date}  {model.description}")
     return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
 
 
 if __name__ == "__main__":

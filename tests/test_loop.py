@@ -4,13 +4,14 @@ import json
 
 from jev_trader.calibration.log import CalibrationLogger
 from jev_trader.config import RiskConfig, Settings
+from jev_trader.domain import JudgmentSet
 from jev_trader.execution.paper import PaperVenue
 from jev_trader.feeds.synthetic import SyntheticFeed
 from jev_trader.judgment.fallback import HeuristicJudge
 from jev_trader.loop.engine import TradingLoop
 
 
-def build_loop(tmp_path, *, blocks: int, settings: Settings, judge=None):
+def build_loop(tmp_path, *, blocks: int, settings: Settings, judge=None, allow_fallback=True):
     feed = SyntheticFeed(seed=3, block_ms=300, max_blocks=blocks)
     venue = PaperVenue(
         starting_cash=settings.starting_cash,
@@ -27,6 +28,7 @@ def build_loop(tmp_path, *, blocks: int, settings: Settings, judge=None):
         fallback=fallback,
         settings=settings,
         calibration=calibration,
+        allow_fallback=allow_fallback,
     )
     return loop, calibration
 
@@ -102,6 +104,63 @@ async def test_deterministic_paper_runs(tmp_path):
     first_summary = first.summary()
     second_summary = second.summary()
     for summary in (first_summary, second_summary):
-        for key in ("avg_latency_ms", "p95_latency_ms", "max_latency_ms"):
+        for key in (
+            "avg_latency_ms",
+            "p50_latency_ms",
+            "p95_latency_ms",
+            "p99_latency_ms",
+            "max_latency_ms",
+        ):
             summary.pop(key)
     assert first_summary == second_summary
+
+
+class FakeJev:
+    """Stands in for the live Jev client until a TypeSafe key is available."""
+
+    def __init__(self, model: str = "jev-latest") -> None:
+        self._model = model
+
+    async def judge(self, state):
+        return JudgmentSet(
+            quote_environment=2.5,
+            quote_environment_confidence=0.9,
+            model=self._model,
+            source="jev",
+            input_tokens=380,
+            output_tokens=40,
+        )
+
+
+async def test_live_jev_tokens_and_version_are_counted(tmp_path):
+    settings = Settings(log_path=tmp_path / "cal.jsonl", jev_model="jev-2026-09")
+    loop, calibration = build_loop(
+        tmp_path, blocks=20, settings=settings, judge=FakeJev(model="jev-2026-10")
+    )
+    stats = await loop.run()
+    calibration.close()
+
+    summary = stats.summary()
+    assert stats.jev_decisions == 20
+    assert summary["input_tokens"] == 20 * 380
+    assert summary["output_tokens"] == 20 * 40
+    assert summary["tokens_per_jev_decision"] == 420.0
+    assert summary["model_mismatches"] == 20
+
+
+async def test_live_only_holds_instead_of_falling_back(tmp_path):
+    class FailingJudge:
+        async def judge(self, state):
+            raise RuntimeError("jev down")
+
+    settings = Settings(log_path=tmp_path / "cal.jsonl", risk=RiskConfig(max_api_errors=1000))
+    loop, calibration = build_loop(
+        tmp_path, blocks=20, settings=settings, judge=FailingJudge(), allow_fallback=False
+    )
+    stats = await loop.run()
+    calibration.close()
+
+    assert stats.fallback_decisions == 0
+    assert stats.jev_errors == 20
+    assert stats.actions == {"hold": 20}
+    assert stats.fills == 0

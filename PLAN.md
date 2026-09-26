@@ -61,11 +61,16 @@ end to end without a TypeSafe key (fallback mode) and writes calibration triples
 ## Phase 1 — Live Jev hardening
 
 - [ ] Apply for a TypeSafe key, run `paper` in live-judgment mode (heuristics off)
+      — ready: `jev-trader paper --live-only` (waiting on key; on the waitlist)
 - [ ] Measure real decision latency distribution per block; tune `decision_timeout_s`
-- [ ] Log and assert the returned `model` matches the pinned version (silent-upgrade guard)
+      — ready: summary reports p50/p95/p99/max latency
+- [x] Log and assert the returned `model` matches the pinned version (silent-upgrade guard)
+      — logged per call, counted as `model_mismatches`
 - [ ] Token accounting: cost per 1M decisions from `usage`, per the $10–25/month claim
+      — ready: input/output tokens summed from `usage`; needs real runs + price
 - [ ] Verify parallel-battery economics: 6 questions, single-question latency
-- [ ] Retry/timeout policy review: never retry past the block deadline
+- [x] Retry/timeout policy review: never retry past the block deadline
+      — `max_retries=0`, SDK timeout = 0.8 × `decision_timeout_s`, loop holds past deadline
 
 **Acceptance:** 10k blocks with live Jev, zero stale-state quotes, latency p99
 inside the block budget, cost per block measured.

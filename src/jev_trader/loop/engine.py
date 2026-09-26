@@ -37,6 +37,9 @@ class LoopStats:
     rejects: int = 0
     fills: int = 0
     fees: float = 0.0
+    model_mismatches: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
     realized: float = 0.0
     unrealized: float = 0.0
     equity: float = 0.0
@@ -45,12 +48,17 @@ class LoopStats:
 
     def summary(self) -> dict[str, Any]:
         latencies = sorted(self.latencies_ms)
+
+        def pct(q: float) -> float:
+            return latencies[min(len(latencies) - 1, int(q * len(latencies)))]
+
         if latencies:
             average = sum(latencies) / len(latencies)
-            p95 = latencies[min(len(latencies) - 1, int(0.95 * len(latencies)))]
+            p50, p95, p99 = pct(0.50), pct(0.95), pct(0.99)
             maximum = latencies[-1]
         else:
-            average = p95 = maximum = 0.0
+            average = p50 = p95 = p99 = maximum = 0.0
+        jev = self.jev_decisions
         return {
             "blocks": self.blocks,
             "decisions": self.decisions,
@@ -58,14 +66,22 @@ class LoopStats:
             "fallback_decisions": self.fallback_decisions,
             "timeouts": self.timeouts,
             "jev_errors": self.jev_errors,
+            "model_mismatches": self.model_mismatches,
             "holds": self.holds,
             "kills": self.kills,
             "rejects": self.rejects,
             "fills": self.fills,
             "actions": dict(sorted(self.actions.items())),
             "avg_latency_ms": round(average, 3),
+            "p50_latency_ms": round(p50, 3),
             "p95_latency_ms": round(p95, 3),
+            "p99_latency_ms": round(p99, 3),
             "max_latency_ms": round(maximum, 3),
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "tokens_per_jev_decision": round((self.input_tokens + self.output_tokens) / jev, 1)
+            if jev
+            else 0.0,
             "realized": round(self.realized, 4),
             "unrealized": round(self.unrealized, 4),
             "fees": round(self.fees, 4),
@@ -85,6 +101,7 @@ class TradingLoop:
         fallback: HeuristicJudge,
         settings: Settings,
         calibration: CalibrationLogger | None = None,
+        allow_fallback: bool = True,
     ) -> None:
         self._feed = feed
         self._venue = venue
@@ -92,6 +109,7 @@ class TradingLoop:
         self._fallback = fallback
         self._settings = settings
         self._calibration = calibration
+        self._allow_fallback = allow_fallback
         self._risk = RiskEngine(settings.risk)
         self._features = FeatureEngine()
         self._stats = LoopStats()
@@ -157,6 +175,11 @@ class TradingLoop:
         stats.latencies_ms.append(latency_ms)
         if source == "jev":
             stats.jev_decisions += 1
+            if judgments is not None:
+                stats.input_tokens += judgments.input_tokens
+                stats.output_tokens += judgments.output_tokens
+                if judgments.model != self._settings.jev_model:
+                    stats.model_mismatches += 1
         elif source == "fallback":
             stats.fallback_decisions += 1
 
@@ -226,6 +249,10 @@ class TradingLoop:
             latency_ms = (time.perf_counter() - started) * 1000.0
             self._api_errors += 1
             self._stats.jev_errors += 1
+            if not self._allow_fallback:
+                logger.exception("Jev unavailable and fallback disabled, holding")
+                action = Action(ActionKind.HOLD, reason="jev error, fallback disabled")
+                return action, None, "error", latency_ms
             logger.exception("Jev unavailable, falling back to deterministic judgments")
             judgments = await self._fallback.judge(state)
             action = compose_action(judgments, state, self._settings.policy, self._settings.risk)

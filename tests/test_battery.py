@@ -30,6 +30,7 @@ def test_parse_response_maps_typed_answers():
     response = SimpleNamespace(
         model="jev-latest",
         request_id="req_123",
+        usage=SimpleNamespace(input_tokens=372, output_tokens=None),
         choices={
             "regime": SimpleNamespace(
                 choice="trending",
@@ -58,6 +59,8 @@ def test_parse_response_maps_typed_answers():
     assert judgments.liquidity_stressed == 0.21
     assert judgments.quote_environment == 2.3
     assert judgments.inventory_pressure == 0.4
+    assert judgments.input_tokens == 372
+    assert judgments.output_tokens == 0
     assert judgments.p_up == 0.62
     assert judgments.model == "jev-latest"
     assert judgments.request_id == "req_123"
