@@ -19,6 +19,7 @@ from jev_trader.calibration.metrics import (
 )
 from jev_trader.config import Settings
 from jev_trader.execution.paper import PaperVenue
+from jev_trader.feeds.replay import ReplayFeed
 from jev_trader.feeds.synthetic import SyntheticFeed
 from jev_trader.judgment.client import JevClient
 from jev_trader.judgment.fallback import HeuristicJudge
@@ -34,7 +35,8 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     paper = sub.add_parser("paper", help="run the paper-trading loop")
-    paper.add_argument("--blocks", type=int, default=2000)
+    paper.add_argument("--blocks", type=int, default=None, help="default 2000 (all, with --replay)")
+    paper.add_argument("--replay", type=Path, default=None, help="recorded JSONL to replay")
     paper.add_argument("--seed", type=int, default=7)
     paper.add_argument("--block-ms", type=int, default=None)
     paper.add_argument("--realtime", action="store_true", help="pace blocks in real time")
@@ -60,6 +62,11 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     sub.add_parser("models", help="list available TypeSafe models")
+
+    rec = sub.add_parser("record", help="record Hyperliquid book + trades for replay")
+    rec.add_argument("--coin", default="SOL")
+    rec.add_argument("--minutes", type=float, default=60.0)
+    rec.add_argument("--out", type=Path, default=None)
     return parser
 
 
@@ -71,18 +78,23 @@ def main(argv: list[str] | None = None) -> int:
         return _run_calibrate(args)
     if args.command == "models":
         return _run_models()
+    if args.command == "record":
+        return _run_record(args)
     return 1
 
 
 async def _run_paper(args: argparse.Namespace) -> int:
     settings = Settings()
     block_ms = args.block_ms or settings.block_ms
-    feed = SyntheticFeed(
-        seed=args.seed,
-        block_ms=block_ms,
-        realtime=args.realtime,
-        max_blocks=args.blocks,
-    )
+    if args.replay is not None:
+        feed = ReplayFeed(args.replay, max_blocks=args.blocks, realtime=args.realtime)
+        source = f"replay {args.replay}"
+    else:
+        blocks = args.blocks if args.blocks is not None else 2000
+        feed = SyntheticFeed(
+            seed=args.seed, block_ms=block_ms, realtime=args.realtime, max_blocks=blocks
+        )
+        source = f"synthetic {blocks} blocks"
     venue = PaperVenue(
         starting_cash=settings.starting_cash,
         fee_bps=settings.fee_bps,
@@ -110,7 +122,7 @@ async def _run_paper(args: argparse.Namespace) -> int:
         else:
             judge = fallback
             mode = "heuristic fallback (no TYPESAFE_API_KEY)"
-        print(f"paper run: {args.blocks} blocks, block_ms={block_ms}, judgments={mode}")
+        print(f"paper run: {source}, judgments={mode}")
         loop = TradingLoop(
             feed=feed,
             venue=venue,
@@ -178,6 +190,19 @@ def _run_models() -> int:
         print(f"{model.name:24s} {model.release_date}  {model.description}")
     return 0
 
+
+
+def _run_record(args: argparse.Namespace) -> int:
+    from datetime import datetime
+
+    from jev_trader.feeds.hyperliquid import record
+
+    stamp = datetime.now().strftime("%Y%m%d-%H%M")
+    out = args.out or Path(f"data/hl_{args.coin}_{stamp}.jsonl")
+    print(f"recording {args.coin} for {args.minutes:g} min -> {out}")
+    books = asyncio.run(record(args.coin, out, args.minutes * 60.0))
+    print(f"done: {books} books")
+    return 0
 
 if __name__ == "__main__":
     raise SystemExit(main())
