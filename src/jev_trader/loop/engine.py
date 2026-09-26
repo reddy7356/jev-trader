@@ -9,7 +9,7 @@ from typing import Any
 
 from jev_trader.calibration.log import CalibrationLogger
 from jev_trader.config import Settings
-from jev_trader.domain import Action, ActionKind, JudgmentSet, Order
+from jev_trader.domain import Action, ActionKind, Fill, JudgmentSet, Order
 from jev_trader.execution.base import OrderRejected
 from jev_trader.feeds.base import Feed
 from jev_trader.judgment.fallback import HeuristicJudge
@@ -22,6 +22,43 @@ from jev_trader.state.snapshot import MarketState, build_market_state
 logger = logging.getLogger(__name__)
 
 QUOTING_ACTIONS = (ActionKind.QUOTE_BOTH_SIDES, ActionKind.QUOTE_WIDE, ActionKind.WIDEN)
+MARKOUT_HORIZONS = (0, 1, 5, 10, 30)
+
+
+@dataclass
+class MarkoutTracker:
+    """Adverse-selection meter: mid move after each fill, from our side of the trade.
+
+    Positive = the market moved our way after we filled; falling with horizon =
+    we are being picked off by informed flow.
+    """
+
+    horizons: tuple[int, ...] = MARKOUT_HORIZONS
+    pnl: dict[int, float] = field(default_factory=dict)
+    notional: dict[int, float] = field(default_factory=dict)
+    _open: deque[tuple[int, Fill]] = field(default_factory=deque)
+
+    def on_block(self, block: int, mid: float, fills: tuple[Fill, ...] = ()) -> None:
+        self._open.extend((block, fill) for fill in fills)
+        for filled_at, fill in self._open:
+            age = block - filled_at
+            if age in self.horizons:
+                sign = 1.0 if fill.side == "buy" else -1.0
+                self.pnl[age] = self.pnl.get(age, 0.0) + sign * (mid - fill.price) * fill.size
+                self.notional[age] = self.notional.get(age, 0.0) + fill.price * fill.size
+        while self._open and block - self._open[0][0] >= max(self.horizons):
+            self._open.popleft()
+
+    def summary(self) -> dict[str, dict[str, float]]:
+        return {
+            "markout_usd": {f"{h}b": round(self.pnl.get(h, 0.0), 4) for h in self.horizons},
+            "markout_bps": {
+                f"{h}b": round(self.pnl[h] / self.notional[h] * 10_000.0, 3)
+                if self.notional.get(h)
+                else 0.0
+                for h in self.horizons
+            },
+        }
 
 
 @dataclass
@@ -46,6 +83,7 @@ class LoopStats:
     equity: float = 0.0
     actions: dict[str, int] = field(default_factory=dict)
     latencies_ms: list[float] = field(default_factory=list)
+    markouts: MarkoutTracker = field(default_factory=MarkoutTracker)
 
     def summary(self) -> dict[str, Any]:
         latencies = sorted(self.latencies_ms)
@@ -88,6 +126,7 @@ class LoopStats:
             "fees": round(self.fees, 4),
             "gas": round(self.gas, 4),
             "equity": round(self.equity, 4),
+            **self.markouts.summary(),
         }
 
 
@@ -146,7 +185,10 @@ class TradingLoop:
         stats.blocks += 1
 
         self._venue.on_block(event)
-        stats.fills += len(self._venue.drain_fills())
+        fills = self._venue.drain_fills()
+        stats.fills += len(fills)
+        if event.book.two_sided:
+            stats.markouts.on_block(event.block, event.book.mid, fills)
 
         now = time.time()
         data_age_s = max(0.0, now - event.ts)

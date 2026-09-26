@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from jev_trader.calibration.log import CalibrationLogger
 from jev_trader.config import RiskConfig, Settings
-from jev_trader.domain import JudgmentSet
+from jev_trader.domain import Fill, JudgmentSet
 from jev_trader.execution.paper import PaperVenue
 from jev_trader.feeds.synthetic import SyntheticFeed
 from jev_trader.judgment.fallback import HeuristicJudge
-from jev_trader.loop.engine import TradingLoop
+from jev_trader.loop.engine import MarkoutTracker, TradingLoop
 
 
 def build_loop(tmp_path, *, blocks: int, settings: Settings, judge=None, allow_fallback=True):
@@ -164,3 +166,19 @@ async def test_live_only_holds_instead_of_falling_back(tmp_path):
     assert stats.jev_errors == 20
     assert stats.actions == {"hold": 20}
     assert stats.fills == 0
+
+
+def test_markouts_sign_moves_from_our_side_of_the_trade():
+    tracker = MarkoutTracker(horizons=(0, 2))
+    buy = Fill(side="buy", price=99.99, size=2.0, fee=0.0)
+    sell = Fill(side="sell", price=100.01, size=1.0, fee=0.0)
+    tracker.on_block(0, 100.00, (buy, sell))
+    tracker.on_block(1, 99.95)
+    tracker.on_block(2, 99.90)  # mid fell: bad for the buy, good for the sell
+
+    assert tracker.pnl[0] == pytest.approx(2 * 0.01 + 1 * 0.01)
+    assert tracker.pnl[2] == pytest.approx(2 * (99.90 - 99.99) + 1 * (100.01 - 99.90))
+    summary = tracker.summary()
+    assert summary["markout_bps"]["0b"] > 0 > summary["markout_bps"]["2b"]
+    tracker.on_block(3, 50.0)
+    assert tracker.pnl[2] == pytest.approx(2 * (99.90 - 99.99) + 1 * (100.01 - 99.90))

@@ -82,7 +82,8 @@ inside the block budget, cost per block measured.
 - [x] Gas / fee model for cancel-replace every block (the "gas honesty check")
       — `--gas-place`, `--gas-cancel`; 2000 blocks = ~1.5k txs; realized PnL is negative even at $0 gas
 - [ ] Historical L2 replay feed (recorded book + trades)
-- [ ] Adverse-selection metrics: markout at 1/5/10/30 blocks after each fill
+- [x] Adverse-selection metrics: markout at 1/5/10/30 blocks after each fill
+      — `markout_bps`/`markout_usd` in the summary; baseline is ~-7 bps already at fill time (stale quotes)
 - [ ] Spread/time-in-book tuning: widen, rest longer, or find directional edge
 
 **Acceptance:** simulated cancel-replace cost model reproduces the structural-loss
