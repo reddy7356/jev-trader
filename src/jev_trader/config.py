@@ -61,6 +61,9 @@ class Settings(BaseSettings):
         default=None, validation_alias="TYPESAFE_API_KEY"
     )
     jev_model: str = "jev-latest"
+    # Hyperliquid testnet: an API (agent) wallet key signs; the main account is queried
+    hl_private_key: SecretStr | None = Field(default=None, validation_alias="HL_PRIVATE_KEY")
+    hl_account_address: str | None = Field(default=None, validation_alias="HL_ACCOUNT_ADDRESS")
     block_ms: int = 300
     decision_timeout_s: float = 0.25
     calibration_horizon_blocks: int = 10

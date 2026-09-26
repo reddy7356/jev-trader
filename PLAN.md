@@ -127,12 +127,20 @@ is whether judgment (Jev or retuned rules) can skip the adverse fills.
 
 ## Phase 4 — Live venue adapter
 
-- [ ] Venue adapter interface (`VenueAdapter` protocol) hardened for async IO
-- [ ] Target selection: Monad/Kuru MON-USDC, Hyperliquid, or Solana DEX
-- [ ] WebSocket `newHeads` block events + polling backstop
-- [ ] Post-only limit order submission, nonce management, tx confirmation tracking
-- [ ] Balance/inventory reconciliation against on-chain state
+- [x] Venue adapter interface (`VenueAdapter` protocol) hardened for async IO
+      — `await venue.sync()` each block; getters answer from local state
+- [x] Target selection: Monad/Kuru MON-USDC, Hyperliquid, or Solana DEX
+      — Hyperliquid (public data, no gas); testnet only in this phase
+- [x] WebSocket `newHeads` block events + polling backstop
+      — HL has no newHeads: `fast` l2Book WS is the block clock; REST reconcile every 5s
+- [x] Post-only limit order submission, nonce management, tx confirmation tracking
+      — `execution/hyperliquid.py`: ALO orders via official SDK, serialized calls (unique
+        ms nonces), every response status checked; unit-tested against a fake exchange
+- [x] Balance/inventory reconciliation against on-chain state
+      — position + account value every block; open orders + fills every 5s, deduped
 - [ ] Kill switch: cancel-all + flatten path tested on testnet
+      — built (`jev-trader kill`, loop KILL path, scheduleCancel dead-man's switch);
+        needs a testnet run: HL testnet faucet requires a prior mainnet deposit
 
 **Acceptance:** 24h testnet run, no orphan orders, no stale quotes, kill switch
 demonstrated live.

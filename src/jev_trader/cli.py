@@ -63,6 +63,17 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("models", help="list available TypeSafe models")
 
+    live = sub.add_parser("live", help="quote on Hyperliquid TESTNET (needs HL_* env vars)")
+    live.add_argument("--coin", default="SOL")
+    live.add_argument("--order-size", type=float, required=True, help="per-quote size in coin")
+    live.add_argument("--max-position", type=float, default=None, help="default 4x order size")
+    live.add_argument("--judge", choices=["heuristic", "always"], default="heuristic")
+    live.add_argument("--blocks", type=int, default=None, help="stop after N blocks")
+    live.add_argument("--log", type=Path, default=Path("data/live_calibration.jsonl"))
+
+    kill = sub.add_parser("kill", help="TESTNET kill switch: cancel all orders, flatten")
+    kill.add_argument("--coin", default="SOL")
+
     rec = sub.add_parser("record", help="record Hyperliquid book + trades for replay")
     rec.add_argument("--coin", default="SOL")
     rec.add_argument("--minutes", type=float, default=60.0)
@@ -80,6 +91,10 @@ def main(argv: list[str] | None = None) -> int:
         return _run_models()
     if args.command == "record":
         return _run_record(args)
+    if args.command == "live":
+        return asyncio.run(_run_live(args))
+    if args.command == "kill":
+        return asyncio.run(_run_kill(args))
     return 1
 
 
@@ -191,6 +206,75 @@ def _run_models() -> int:
     return 0
 
 
+
+
+def _connect_testnet(settings: Settings, coin: str):  # -> HyperliquidVenue | None
+    from jev_trader.execution.hyperliquid import HyperliquidVenue
+
+    if settings.hl_private_key is None or not settings.hl_account_address:
+        print("set HL_PRIVATE_KEY (API wallet key) and HL_ACCOUNT_ADDRESS (main account)")
+        return None
+    return HyperliquidVenue.connect(
+        coin=coin,
+        private_key=settings.hl_private_key.get_secret_value(),
+        account_address=settings.hl_account_address,
+    )
+
+
+async def _run_live(args: argparse.Namespace) -> int:
+    from jev_trader.backtest import JUDGES
+    from jev_trader.feeds.hyperliquid import HyperliquidFeed
+
+    settings = Settings()
+    venue = _connect_testnet(settings, args.coin)
+    if venue is None:
+        return 1
+    await venue.sync()
+    max_position = args.max_position or 4 * args.order_size
+    settings = settings.model_copy(
+        update={
+            "starting_cash": venue.equity(),
+            "risk": settings.risk.model_copy(
+                update={"max_order_size": args.order_size, "max_position": max_position}
+            ),
+        }
+    )
+    fallback = HeuristicJudge(max_position=max_position)
+    calibration = CalibrationLogger(args.log)
+    async with AsyncExitStack() as stack:
+        if settings.has_api_key:
+            judge = await stack.enter_async_context(JevClient(settings))
+            mode = f"jev ({settings.jev_model})"
+        else:
+            judge = JUDGES[args.judge](max_position=max_position)
+            mode = args.judge
+        print(
+            f"LIVE TESTNET {args.coin}: equity {venue.equity():.2f}, order {args.order_size},"
+            f" max position {max_position}, judgments={mode}. Ctrl-C cancels all orders."
+        )
+        loop = TradingLoop(
+            feed=HyperliquidFeed(args.coin, testnet=True, max_blocks=args.blocks),
+            venue=venue,
+            judge=judge,
+            fallback=fallback,
+            settings=settings,
+            calibration=calibration,
+        )
+        try:
+            stats = await loop.run()
+        finally:
+            calibration.close()
+    print(json.dumps(stats.summary(), indent=2))
+    return 0
+
+
+async def _run_kill(args: argparse.Namespace) -> int:
+    venue = _connect_testnet(Settings(), args.coin)
+    if venue is None:
+        return 1
+    fill = await venue.flatten()
+    print(f"all {args.coin} orders cancelled; position: {fill or 'already flat'}")
+    return 0
 
 def _run_record(args: argparse.Namespace) -> int:
     from datetime import datetime
