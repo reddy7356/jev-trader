@@ -81,7 +81,12 @@ inside the block budget, cost per block measured.
 - [x] Latency simulation: order ack + cancel/replace round trip (`--ack-ms`, `--cancel-ms`)
 - [x] Gas / fee model for cancel-replace every block (the "gas honesty check")
       — `--gas-place`, `--gas-cancel`; 2000 blocks = ~1.5k txs; realized PnL is negative even at $0 gas
-- [ ] Historical L2 replay feed (recorded book + trades)
+- [x] Historical L2 replay feed (recorded book + trades)
+      — `jev-trader record --coin SOL` (Hyperliquid, public) + `paper --replay`.
+        60 min SOL (6.6k books, 2.5k trades), 1.5 bps maker fee, no gas:
+        heuristic judge never quotes (thresholds tuned on synthetic data);
+        always-quote at 1-5 bps: markout at fill ~-1 bps, fees 1.5 bps -> net loss;
+        10 bps: +$2..6 on 2-17 fills (noise, not edge); >=20 bps: no fills.
 - [x] Adverse-selection metrics: markout at 1/5/10/30 blocks after each fill
       — `markout_bps`/`markout_usd` in the summary; baseline is ~-7 bps already at fill time (stale quotes)
 - [x] Spread/time-in-book tuning: widen, rest longer, or find directional edge
@@ -94,6 +99,12 @@ inside the block budget, cost per block measured.
 **Acceptance:** simulated cancel-replace cost model reproduces the structural-loss
 result from the article's critique; a configuration with positive net edge exists
 in simulation or the strategy is rejected.
+
+**Result (2026-09-26):** no configuration shows positive net edge. Synthetic: every
+setting loses (-12..-16 bps markout at fill). Real SOL replay: adverse selection is
+small (~-1 bps) but the 1.5 bps maker fee exceeds the spread captured at the touch.
+Rejected as a plain quoting strategy at base-tier fees; the open question for Phase 3
+is whether judgment (Jev or retuned rules) can skip the adverse fills.
 
 ## Phase 3 — Calibration & backtest harness
 
