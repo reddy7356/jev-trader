@@ -109,11 +109,18 @@ is whether judgment (Jev or retuned rules) can skip the adverse fills.
 ## Phase 3 — Calibration & backtest harness
 
 - [ ] Four baselines on identical data: hand rules, frontier LLM layer, Jev, Jev + confidence gating
-- [ ] Metrics: Sharpe, Sortino, max drawdown, hit rate, slippage, adverse selection,
+      — harness ready (`scripts/backtest.py TRAIN TEST`): hand rules + always-quote run;
+        LLM / Jev rows pending keys
+- [x] Metrics: Sharpe, Sortino, max drawdown, hit rate, slippage, adverse selection,
       cost per 1M decisions, coverage
-- [ ] Reliability curves from logged triples; Brier / log loss / ECE
+      — in every run summary; slippage is 0 for post-only quotes (markouts carry it)
+- [x] Reliability curves from logged triples; Brier / log loss / ECE
+      — `jev-trader calibrate`; backtest report includes the hand rules' P(up) calibration
 - [ ] Platt scaling in the policy layer when the reliability curve bends
-- [ ] Threshold sweep: one threshold per action, scaled to cost of being wrong
+      — blocked: the policy does not use P(up) yet (`kelly_fraction` is unused);
+        wire P(up) into sizing first, then calibrate it
+- [x] Threshold sweep: one threshold per action, scaled to cost of being wrong
+      — backtest tunes toxic_pull, quote_wide_min_score, liquidity_widen, spread on train
 - [ ] Answer the real research question: does abstaining when uncertain improve the book?
 
 **Acceptance:** published backtest report in `docs/` with the four-way comparison.
