@@ -3,9 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
+from jev_trader.domain import Fill, Order, PnL
 from jev_trader.state.book import OrderBook
 from jev_trader.state.events import BlockEvent
-from jev_trader.types import Fill, Order, PnL
 
 
 class OrderRejected(Exception):

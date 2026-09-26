@@ -157,3 +157,7 @@ def _run_models() -> int:
     for model in models.models:
         print(f"{model.name:24s} {model.release_date}  {model.description}")
     return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

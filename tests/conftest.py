@@ -4,10 +4,10 @@ from collections.abc import Callable
 
 import pytest
 
+from jev_trader.domain import JudgmentSet
 from jev_trader.state.book import Level, OrderBook
 from jev_trader.state.events import BlockEvent, Trade
 from jev_trader.state.snapshot import MarketState
-from jev_trader.types import JudgmentSet
 
 
 @pytest.fixture

@@ -6,7 +6,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, TextIO
 
-from jev_trader.types import Action, JudgmentSet
+from jev_trader.domain import Action, JudgmentSet
 
 
 class CalibrationLogger:

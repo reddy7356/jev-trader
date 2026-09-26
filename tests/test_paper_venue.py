@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import pytest
 
+from jev_trader.domain import Order
 from jev_trader.execution.base import OrderRejected
 from jev_trader.execution.paper import PaperVenue
 from jev_trader.state.events import Trade
-from jev_trader.types import Order
 
 
 def make_venue(**overrides: float) -> PaperVenue:

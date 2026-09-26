@@ -7,9 +7,9 @@ from types import TracebackType
 from typesafe_sdk import AsyncTypeSafeClient, RetryPolicy
 
 from jev_trader.config import Settings
+from jev_trader.domain import JudgmentSet
 from jev_trader.judgment.battery import build_questions, parse_response
 from jev_trader.state.snapshot import MarketState
-from jev_trader.types import JudgmentSet
 
 logger = logging.getLogger(__name__)
 

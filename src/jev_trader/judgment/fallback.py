@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import math
 
+from jev_trader.domain import JudgmentSet
 from jev_trader.state.snapshot import MarketState
-from jev_trader.types import JudgmentSet
 
 FALLBACK_CONFIDENCE = 0.5
 

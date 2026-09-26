@@ -4,7 +4,7 @@ from typing import Any
 
 from typesafe_sdk import Choice, Noul, Score
 
-from jev_trader.types import JudgmentSet
+from jev_trader.domain import JudgmentSet
 
 REGIME_OPTIONS = ("trending", "mean_reverting", "high_vol", "crisis")
 DIRECTION_OPTIONS = ("up", "down", "neutral")

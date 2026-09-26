@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from jev_trader.config import PolicyConfig, RiskConfig
+from jev_trader.domain import ActionKind
 from jev_trader.policy.engine import compose_action
-from jev_trader.types import ActionKind
 
 POLICY = PolicyConfig()
 RISK = RiskConfig()

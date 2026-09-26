@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from jev_trader.config import PolicyConfig, RiskConfig
+from jev_trader.domain import Action, ActionKind, JudgmentSet
 from jev_trader.policy.sizing import inventory_skew
 from jev_trader.state.snapshot import MarketState
-from jev_trader.types import Action, ActionKind, JudgmentSet
 
 
 def compose_action(
