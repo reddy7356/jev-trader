@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from jev_trader.calibration.log import CalibrationLogger
 from jev_trader.config import RiskConfig, Settings
 from jev_trader.domain import JudgmentSet
 from jev_trader.execution.paper import PaperVenue
@@ -65,7 +66,14 @@ def make_feed(source: str | Path | int, blocks: int = 10_000) -> Any:
     return ReplayFeed(Path(source))
 
 
-async def run(judge: str, settings: Settings, source: str | Path | int, costs: Costs) -> dict:
+async def run(
+    judge: str,
+    settings: Settings,
+    source: str | Path | int,
+    costs: Costs,
+    log_path: Path | None = None,
+) -> dict:
+    """One paper run; `log_path` (overwritten) captures calibration triples."""
     venue = PaperVenue(
         starting_cash=settings.starting_cash,
         fee_bps=costs.fee_bps,
@@ -77,11 +85,20 @@ async def run(judge: str, settings: Settings, source: str | Path | int, costs: C
         gas_per_cancel=costs.gas_per_tx,
     )
     fallback = HeuristicJudge(max_position=settings.risk.max_position)
+    calibration = None
+    if log_path is not None:
+        log_path.unlink(missing_ok=True)
+        calibration = CalibrationLogger(log_path)
     loop = TradingLoop(
         feed=make_feed(source),
         venue=venue,
         judge=JUDGES[judge](max_position=settings.risk.max_position),
         fallback=fallback,
         settings=settings,
+        calibration=calibration,
     )
-    return (await loop.run()).summary()
+    try:
+        return (await loop.run()).summary()
+    finally:
+        if calibration is not None:
+            calibration.close()
