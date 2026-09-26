@@ -106,3 +106,41 @@ async def test_fees_are_charged(make_event):
     venue.on_block(make_event(block=1, ts=1.0, mid=100.0, trades=(trade,)))
     venue.drain_fills()
     assert venue.pnl().fees == pytest.approx(0.1)
+
+
+async def test_touch_fill_waits_for_queue_ahead(make_event):
+    # make_event's book rests 10.0 on the best bid at 99.99
+    venue = make_venue()
+    venue.on_block(make_event())
+    await venue.place(Order(side="buy", price=99.99, size=5.0))
+
+    first = Trade(ts=1.0, price=99.99, size=6.0, side="sell")
+    venue.on_block(make_event(block=1, ts=1.0, trades=(first,)))
+    assert venue.drain_fills() == ()
+
+    second = Trade(ts=2.0, price=99.99, size=7.0, side="sell")
+    venue.on_block(make_event(block=2, ts=2.0, trades=(second,)))
+    fills = venue.drain_fills()
+    assert len(fills) == 1
+    assert fills[0].size == pytest.approx(3.0)
+    assert venue.inventory() == pytest.approx(3.0)
+
+
+async def test_touch_trade_from_same_side_does_not_fill(make_event):
+    venue = make_venue()
+    venue.on_block(make_event())
+    await venue.place(Order(side="buy", price=99.99, size=5.0))
+    trade = Trade(ts=1.0, price=99.99, size=50.0, side="buy")
+    venue.on_block(make_event(block=1, ts=1.0, trades=(trade,)))
+    assert venue.drain_fills() == ()
+
+
+async def test_improving_the_price_puts_us_first_in_queue(make_event):
+    venue = make_venue()
+    venue.on_block(make_event())
+    await venue.place(Order(side="buy", price=100.00, size=2.0))
+    trade = Trade(ts=1.0, price=100.00, size=2.0, side="sell")
+    venue.on_block(make_event(block=1, ts=1.0, mid=100.01, trades=(trade,)))
+    fills = venue.drain_fills()
+    assert len(fills) == 1
+    assert fills[0].size == pytest.approx(2.0)

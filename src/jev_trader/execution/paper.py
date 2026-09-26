@@ -7,12 +7,15 @@ from jev_trader.state.events import BlockEvent
 
 
 class PaperVenue:
-    """In-memory venue with post-only order lifecycle and trade-through fills.
+    """In-memory venue with post-only order lifecycle and a queue-position fill model.
 
-    Conservative fill model: a resting order fills only when a trade prints
-    strictly through its price, and only up to the printed size. No queue
-    priority and no partial-queue modeling; a more realistic queue-position
-    model is Phase 2 in PLAN.md.
+    A resting order joins the back of the queue at its price level. A trade that
+    prints strictly through the price fills it outright. A trade at the price
+    (the touch) must first consume the size queued ahead; only the remainder
+    fills us. Every trade fills at most its printed size.
+
+    ponytail: queue ahead only shrinks by trades, never by cancellations ahead,
+    so fills are conservative; model cancel-driven queue decay if fills look too rare.
     """
 
     def __init__(
@@ -28,7 +31,8 @@ class PaperVenue:
         self._tick_size = tick_size
         self._max_order_size = max_order_size
         self._book: OrderBook | None = None
-        self._orders: dict[str, tuple[Order, float]] = {}
+        # order id -> (order, remaining size, size queued ahead of us at our price)
+        self._orders: dict[str, tuple[Order, float, float]] = {}
         self._fill_queue: list[Fill] = []
         self._position = 0.0
         self._avg_entry = 0.0
@@ -44,15 +48,26 @@ class PaperVenue:
         self._book = event.book
         for trade in event.trades:
             trade_left = trade.size
-            for oid, (order, remaining) in list(self._orders.items()):
+            for oid, (order, remaining, ahead) in list(self._orders.items()):
                 if trade_left <= 0:
                     break
-                crossed = (order.side == "buy" and trade.price < order.price) or (
-                    order.side == "sell" and trade.price > order.price
+                # half-tick tolerance: prices are floats, 99.99 may be stored as 99.99000000000001
+                half_tick = self._tick_size / 2
+                through = (order.side == "buy" and trade.price < order.price - half_tick) or (
+                    order.side == "sell" and trade.price > order.price + half_tick
                 )
-                if not crossed:
+                # a sell aggressor hits resting bids; a buy aggressor lifts resting asks
+                at_touch = abs(trade.price - order.price) < half_tick and trade.side != order.side
+                if at_touch and not through:
+                    eaten = min(ahead, trade_left)
+                    ahead -= eaten
+                    trade_left -= eaten
+                elif not through:
                     continue
                 qty = min(remaining, trade_left)
+                if qty <= 0:
+                    self._orders[oid] = (order, remaining, ahead)
+                    continue
                 fee = order.price * qty * self._fee_rate
                 self._apply_fill(order.side, order.price, qty, fee)
                 self._fill_queue.append(Fill(order.side, order.price, qty, fee))
@@ -62,7 +77,7 @@ class PaperVenue:
                 if remaining <= 0:
                     del self._orders[oid]
                 else:
-                    self._orders[oid] = (order, remaining)
+                    self._orders[oid] = (order, remaining, ahead)
 
     def drain_fills(self) -> tuple[Fill, ...]:
         fills = tuple(self._fill_queue)
@@ -101,7 +116,7 @@ class PaperVenue:
         return max(0.0, now - self._position_opened_ts)
 
     def open_orders(self) -> tuple[Order, ...]:
-        return tuple(order for order, _ in self._orders.values())
+        return tuple(order for order, _, _ in self._orders.values())
 
     async def cancel_all(self) -> int:
         count = len(self._orders)
@@ -124,11 +139,16 @@ class PaperVenue:
             if order.side == "sell" and price <= book.best_bid.price:
                 self._rejects += 1
                 raise OrderRejected("post-only sell would cross the book")
+        levels = book.bids if order.side == "buy" else book.asks
+        ahead = sum(
+            level.size for level in levels if abs(level.price - price) < self._tick_size / 2
+        )
         self._next_id += 1
         oid = f"paper-{self._next_id}"
         self._orders[oid] = (
             Order(side=order.side, price=price, size=order.size, post_only=order.post_only),
             order.size,
+            ahead,
         )
         return oid
 

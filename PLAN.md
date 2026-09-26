@@ -77,7 +77,7 @@ inside the block budget, cost per block measured.
 
 ## Phase 2 — Realistic simulation
 
-- [ ] Queue-position fill model (fills require trade-through, not touch)
+- [x] Queue-position fill model (trade-through fills outright; touch fills only after the queue ahead is consumed)
 - [ ] Latency simulation: order ack + cancel/replace round trip
 - [ ] Gas / fee model for cancel-replace every block (the "gas honesty check")
 - [ ] Historical L2 replay feed (recorded book + trades)
