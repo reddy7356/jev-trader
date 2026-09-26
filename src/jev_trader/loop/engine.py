@@ -13,6 +13,7 @@ from jev_trader.domain import Action, ActionKind, Fill, JudgmentSet, Order
 from jev_trader.execution.base import OrderRejected
 from jev_trader.feeds.base import Feed
 from jev_trader.judgment.fallback import HeuristicJudge
+from jev_trader.loop.performance import performance
 from jev_trader.policy.engine import compose_action
 from jev_trader.pricing.avellaneda_stoikov import compute_quote
 from jev_trader.risk.limits import RiskEngine, RiskState, Verdict
@@ -36,6 +37,8 @@ class MarkoutTracker:
     horizons: tuple[int, ...] = MARKOUT_HORIZONS
     pnl: dict[int, float] = field(default_factory=dict)
     notional: dict[int, float] = field(default_factory=dict)
+    hits: dict[int, int] = field(default_factory=dict)
+    counts: dict[int, int] = field(default_factory=dict)
     _open: deque[tuple[int, Fill]] = field(default_factory=deque)
 
     def on_block(self, block: int, mid: float, fills: tuple[Fill, ...] = ()) -> None:
@@ -44,7 +47,10 @@ class MarkoutTracker:
             age = block - filled_at
             if age in self.horizons:
                 sign = 1.0 if fill.side == "buy" else -1.0
-                self.pnl[age] = self.pnl.get(age, 0.0) + sign * (mid - fill.price) * fill.size
+                edge = sign * (mid - fill.price) * fill.size
+                self.pnl[age] = self.pnl.get(age, 0.0) + edge
+                self.hits[age] = self.hits.get(age, 0) + (edge > 0)
+                self.counts[age] = self.counts.get(age, 0) + 1
                 self.notional[age] = self.notional.get(age, 0.0) + fill.price * fill.size
         while self._open and block - self._open[0][0] >= max(self.horizons):
             self._open.popleft()
@@ -56,6 +62,10 @@ class MarkoutTracker:
                 f"{h}b": round(self.pnl[h] / self.notional[h] * 10_000.0, 3)
                 if self.notional.get(h)
                 else 0.0
+                for h in self.horizons
+            },
+            "hit_rate": {
+                f"{h}b": round(self.hits.get(h, 0) / n, 3) if (n := self.counts.get(h)) else 0.0
                 for h in self.horizons
             },
         }
@@ -84,6 +94,8 @@ class LoopStats:
     actions: dict[str, int] = field(default_factory=dict)
     latencies_ms: list[float] = field(default_factory=list)
     markouts: MarkoutTracker = field(default_factory=MarkoutTracker)
+    starting_cash: float = 0.0
+    equity_curve: list[tuple[float, float]] = field(default_factory=list)
 
     def summary(self) -> dict[str, Any]:
         latencies = sorted(self.latencies_ms)
@@ -98,6 +110,8 @@ class LoopStats:
         else:
             average = p50 = p95 = p99 = maximum = 0.0
         jev = self.jev_decisions
+        quoting = sum(self.actions.get(kind.value, 0) for kind in QUOTING_ACTIONS)
+        perf = performance(self.equity_curve, self.starting_cash)
         return {
             "blocks": self.blocks,
             "decisions": self.decisions,
@@ -126,6 +140,10 @@ class LoopStats:
             "fees": round(self.fees, 4),
             "gas": round(self.gas, 4),
             "equity": round(self.equity, 4),
+            "sharpe": round(perf["sharpe"], 3),
+            "sortino": round(perf["sortino"], 3),
+            "max_drawdown": round(perf["max_drawdown"], 6),
+            "coverage": round(quoting / self.blocks, 4) if self.blocks else 0.0,
             **self.markouts.summary(),
         }
 
@@ -153,7 +171,7 @@ class TradingLoop:
         self._allow_fallback = allow_fallback
         self._risk = RiskEngine(settings.risk)
         self._features = FeatureEngine()
-        self._stats = LoopStats()
+        self._stats = LoopStats(starting_cash=settings.starting_cash)
         self._peak_equity = settings.starting_cash
         self._api_errors = 0
         self._last_latency_ms = 0.0
@@ -194,6 +212,7 @@ class TradingLoop:
         data_age_s = max(0.0, now - event.ts)
         pnl = self._venue.pnl()
         equity = self._venue.equity()
+        stats.equity_curve.append((event.ts, equity))
         self._peak_equity = max(self._peak_equity, equity)
         drawdown = (
             (self._peak_equity - equity) / self._peak_equity if self._peak_equity > 0 else 0.0

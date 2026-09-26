@@ -180,6 +180,8 @@ def test_markouts_sign_moves_from_our_side_of_the_trade():
     assert tracker.pnl[2] == pytest.approx(2 * (99.90 - 99.99) + 1 * (100.01 - 99.90))
     summary = tracker.summary()
     assert summary["markout_bps"]["0b"] > 0 > summary["markout_bps"]["2b"]
+    assert summary["hit_rate"]["0b"] == 1.0  # both filled inside the mid
+    assert summary["hit_rate"]["2b"] == 0.5  # the sell won, the buy lost
     tracker.on_block(3, 50.0)
     assert tracker.pnl[2] == pytest.approx(2 * (99.90 - 99.99) + 1 * (100.01 - 99.90))
 
