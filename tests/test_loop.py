@@ -93,6 +93,26 @@ async def test_kill_switch_on_api_errors(tmp_path):
     assert stats.jev_errors >= 1
 
 
+async def test_scattered_api_errors_do_not_kill(tmp_path):
+    class FlakyJudge(HeuristicJudge):
+        calls = 0
+
+        async def judge(self, state):
+            self.calls += 1
+            if self.calls % 2 == 0:  # every other call fails: never 2 in a row
+                raise RuntimeError("503")
+            return await super().judge(state)
+
+    settings = Settings(log_path=tmp_path / "cal.jsonl", risk=RiskConfig(max_api_errors=1))
+    judge = FlakyJudge(max_position=100)
+    loop, calibration = build_loop(tmp_path, blocks=50, settings=settings, judge=judge)
+    stats = await loop.run()
+    calibration.close()
+
+    assert stats.jev_errors == 25
+    assert not loop.killed
+
+
 async def test_deterministic_paper_runs(tmp_path):
     settings = Settings(log_path=tmp_path / "cal.jsonl")
     first_loop, first_log = build_loop(tmp_path / "a", blocks=100, settings=settings)

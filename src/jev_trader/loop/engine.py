@@ -333,6 +333,7 @@ class TradingLoop:
             return action, judgments, "fallback", latency_ms
 
         latency_ms = (time.perf_counter() - started) * 1000.0
+        self._api_errors = 0  # limit is on consecutive errors: one blip must not kill 24/7
         action = compose_action(judgments, state, self._settings.policy, self._settings.risk)
         return action, judgments, judgments.source, latency_ms
 

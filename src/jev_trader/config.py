@@ -18,7 +18,7 @@ class RiskConfig(BaseModel):
     max_inventory_age_s: float = 900.0
     max_stale_data_age_s: float = 2.0
     max_decision_latency_ms: float = 250.0
-    max_api_errors: int = 5
+    max_api_errors: int = 5  # consecutive
     kill_position_multiplier: float = 1.5
 
 
