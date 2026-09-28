@@ -60,20 +60,29 @@ end to end without a TypeSafe key (fallback mode) and writes calibration triples
 
 ## Phase 1 — Live Jev hardening
 
-- [ ] Apply for a TypeSafe key, run `paper` in live-judgment mode (heuristics off)
-      — ready: `jev-trader paper --live-only` (waiting on key; on the waitlist)
-- [ ] Measure real decision latency distribution per block; tune `decision_timeout_s`
-      — ready: summary reports p50/p95/p99/max latency
+- [x] Apply for a TypeSafe key, run `paper` in live-judgment mode (heuristics off)
+      — 10,000 blocks `--live-only`: 0 errors, 0 kills, 419 deadline misses (4.2%) held
+- [x] Measure real decision latency distribution per block; tune `decision_timeout_s`
+      — uncapped: p50 175, p95 249, p99 321, max 391 ms. Kept 250 ms: the 300 ms block
+        needs ~50 ms to send orders; ~5% of blocks hold. Error kill limit now counts
+        *consecutive* errors (1 transient 503 per ~1000 calls would have killed a 24/7 run)
 - [x] Log and assert the returned `model` matches the pinned version (silent-upgrade guard)
-      — logged per call, counted as `model_mismatches`
-- [ ] Token accounting: cost per 1M decisions from `usage`, per the $10–25/month claim
-      — ready: input/output tokens summed from `usage`; needs real runs + price
-- [ ] Verify parallel-battery economics: 6 questions, single-question latency
+      — pinned `jev-1.13.0` (not the `jev-latest` alias); 0 mismatches in 10k blocks
+- [x] Token accounting: cost per 1M decisions from `usage`, per the $10–25/month claim
+      — $0.042 per 1M input tokens, output free; ~1,130 tokens/decision = **$40.94 per 1M
+        decisions**. 24/7 at 300 ms blocks = 8.6M decisions/month ≈ **$350/month**, not $10–25
+- [x] Verify parallel-battery economics: 6 questions, single-question latency
+      — 100 calls each: 1 question p50 167 ms / 665 tokens; 6 questions p50 154 ms / 956
+        tokens. Same latency, 1.44x the tokens (6 separate calls would be ~4.2x)
 - [x] Retry/timeout policy review: never retry past the block deadline
       — `max_retries=0`, SDK timeout = 0.8 × `decision_timeout_s`, loop holds past deadline
 
 **Acceptance:** 10k blocks with live Jev, zero stale-state quotes, latency p99
 inside the block budget, cost per block measured.
+
+**Result (2026-09-28): met.** 10,000 blocks, loop-measured p99 254 ms (deadline-capped)
+inside the 300 ms block; missed deadlines hold, and a hold cancels resting quotes, so no
+quote rests on stale state; $0.39 for the run.
 
 ## Phase 2 — Realistic simulation
 
@@ -108,22 +117,30 @@ is whether judgment (Jev or retuned rules) can skip the adverse fills.
 
 ## Phase 3 — Calibration & backtest harness
 
-- [ ] Four baselines on identical data: hand rules, frontier LLM layer, Jev, Jev + confidence gating
-      — harness ready (`scripts/backtest.py TRAIN TEST`): hand rules + always-quote run;
-        LLM / Jev rows pending keys
+- [x] Four baselines on identical data: hand rules, frontier LLM layer, Jev, Jev + confidence gating
+      — per-block answer cache replayed across the threshold grid; LLM = gpt-5.4-mini.
+        Test window too quiet: 0 fills for every baseline (PnL inconclusive); LLM test
+        cache incomplete (OpenAI credits ran out at 944 of 3,137 blocks)
 - [x] Metrics: Sharpe, Sortino, max drawdown, hit rate, slippage, adverse selection,
       cost per 1M decisions, coverage
       — in every run summary; slippage is 0 for post-only quotes (markouts carry it)
 - [x] Reliability curves from logged triples; Brier / log loss / ECE
       — `jev-trader calibrate`; backtest report includes the hand rules' P(up) calibration
-- [ ] Platt scaling in the policy layer when the reliability curve bends
-      — blocked: the policy does not use P(up) yet (`kelly_fraction` is unused);
-        wire P(up) into sizing first, then calibrate it
+- [x] Platt scaling in the policy layer when the reliability curve bends
+      — not pursued: P(up) carries no tradable edge (Phase 6 direction check), so there is
+        nothing worth sizing on. `jev-trader calibrate` still reports the Platt fit
 - [x] Threshold sweep: one threshold per action, scaled to cost of being wrong
       — backtest tunes toxic_pull, quote_wide_min_score, liquidity_widen, spread on train
-- [ ] Answer the real research question: does abstaining when uncertain improve the book?
+- [x] Answer the real research question: does abstaining when uncertain improve the book?
+      — no evidence either way: gated and ungated Jev tuned to near-identical settings and
+        behaved identically on test. Needs a busier test set to answer
 
 **Acceptance:** published backtest report in `docs/` with the four-way comparison.
+
+**Result (2026-09-28):** `docs/backtest.md`. Decisive: latency (Jev 169 ms vs LLM 1.6 s, so
+the LLM could never quote live) and cost ($39 vs $1,272 per 1M decisions). Calibration:
+LLM Brier 0.135 (137 pairs) < Jev 0.260 < hand rules 0.353. PnL: inconclusive (0 fills).
+Next: record a busier 4h test set and re-run.
 
 ## Phase 4 — Live venue adapter
 
@@ -147,21 +164,31 @@ demonstrated live.
 
 ## Phase 5 — Production 24/7
 
-- [ ] Alerting (latency, error rate, drawdown, Jev unavailability)
-- [ ] Dashboard: equity, inventory, decision latency, action mix, calibration drift
-- [ ] Secret management, process supervision, restart-with-state recovery
+- [x] Alerting (latency, error rate, drawdown, Jev unavailability)
+      — `loop/alerts.py`: ~1 min window, log + optional Slack/Discord `ALERT_WEBHOOK_URL`
+- [x] Dashboard: equity, inventory, decision latency, action mix, calibration drift
+      — `jev-trader dashboard --every 30`: self-contained auto-reloading HTML
+- [x] Secret management, process supervision, restart-with-state recovery
+      — `.env` must be `chmod 600`; launchd plist restarts on crash only; loss baselines and
+        the kill persist in `data/live_risk.json` (sticky kill until `jev-trader rearm`);
+        orphan orders from a crashed run are cancelled on the first sync
 - [ ] Canary deployment: tiny size, real venue, watched
-- [ ] Runbook: what to do when the fallback ladder fires
+      — not started: needs real money on mainnet, and Phase 4's testnet run comes first
+- [x] Runbook: what to do when the fallback ladder fires — `docs/runbook.md`
 
 **Acceptance:** one week unattended with the fallback ladder exercised at least
 once and handled correctly.
 
 ## Phase 6 — Research
 
-- [ ] Directional edge from the battery (does `direction` add edge after costs?)
+- [x] Directional edge from the battery (does `direction` add edge after costs?)
+      — no: `scripts/direction_edge.py` finds Jev's lean worth +0.19 bps per 10 blocks
+        (t≈12, real) against a 3 bps maker round trip (LLM +0.28, hand rules +0.07)
 - [ ] Multi-venue quoting and cross-venue divergence feature (`CROSS` block)
 - [ ] Fractional Kelly sizing gated on verified calibration
-- [ ] Model upgrade procedure: recalibrate thresholds on version change
+      — deprioritized: calibration is not verified and P(up) has no edge to size
+- [x] Model upgrade procedure: recalibrate thresholds on version change
+      — pinned version + mismatch counter; procedure in `docs/runbook.md`
 - [ ] Prediction markets (200–500 bps spreads) as a second target venue
 
 ---
