@@ -31,6 +31,7 @@ class JevClient:
 
     async def __aenter__(self) -> JevClient:
         self._client = AsyncTypeSafeClient(
+            api_key=self._settings.typesafe_api_key.get_secret_value(),
             model=self._settings.jev_model,
             retry=RetryPolicy(
                 max_retries=0,

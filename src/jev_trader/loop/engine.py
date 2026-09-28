@@ -95,6 +95,7 @@ class LoopStats:
     latencies_ms: list[float] = field(default_factory=list)
     markouts: MarkoutTracker = field(default_factory=MarkoutTracker)
     starting_cash: float = 0.0
+    usd_per_mtok: float = 0.0
     equity_curve: list[tuple[float, float]] = field(default_factory=list)
 
     def summary(self) -> dict[str, Any]:
@@ -135,6 +136,12 @@ class LoopStats:
             "tokens_per_jev_decision": round((self.input_tokens + self.output_tokens) / jev, 1)
             if jev
             else 0.0,
+            "jev_cost_usd": round(self.input_tokens * self.usd_per_mtok / 1e6, 6),
+            "cost_per_1m_decisions_usd": round(
+                self.input_tokens * self.usd_per_mtok / jev, 2
+            )
+            if jev
+            else 0.0,
             "realized": round(self.realized, 4),
             "unrealized": round(self.unrealized, 4),
             "fees": round(self.fees, 4),
@@ -171,7 +178,9 @@ class TradingLoop:
         self._allow_fallback = allow_fallback
         self._risk = RiskEngine(settings.risk)
         self._features = FeatureEngine()
-        self._stats = LoopStats(starting_cash=settings.starting_cash)
+        self._stats = LoopStats(
+            starting_cash=settings.starting_cash, usd_per_mtok=settings.jev_usd_per_mtok
+        )
         self._peak_equity = settings.starting_cash
         self._api_errors = 0
         self._last_latency_ms = 0.0

@@ -60,7 +60,10 @@ class Settings(BaseSettings):
     typesafe_api_key: SecretStr | None = Field(
         default=None, validation_alias="TYPESAFE_API_KEY"
     )
-    jev_model: str = "jev-latest"
+    # pin the versioned ID, not the jev-latest alias: thresholds are tuned per version
+    jev_model: str = "jev-1.13.0"
+    # input tokens only; output is free (docs.typesafe.ai/models)
+    jev_usd_per_mtok: float = 0.042
     # Hyperliquid testnet: an API (agent) wallet key signs; the main account is queried
     hl_private_key: SecretStr | None = Field(default=None, validation_alias="HL_PRIVATE_KEY")
     hl_account_address: str | None = Field(default=None, validation_alias="HL_ACCOUNT_ADDRESS")

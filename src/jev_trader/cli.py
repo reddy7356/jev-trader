@@ -199,7 +199,7 @@ def _run_models() -> int:
     if not settings.has_api_key:
         print("TYPESAFE_API_KEY is not set")
         return 1
-    with TypeSafeClient() as client:
+    with TypeSafeClient(api_key=settings.typesafe_api_key.get_secret_value()) as client:
         models = client.models.list()
     for model in models.models:
         print(f"{model.name:24s} {model.release_date}  {model.description}")

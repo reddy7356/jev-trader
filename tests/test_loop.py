@@ -148,6 +148,8 @@ async def test_live_jev_tokens_and_version_are_counted(tmp_path):
     assert summary["output_tokens"] == 20 * 40
     assert summary["tokens_per_jev_decision"] == 420.0
     assert summary["model_mismatches"] == 20
+    # 380 input tokens x $0.042 per 1M tokens, times 1M decisions
+    assert summary["cost_per_1m_decisions_usd"] == 15.96
 
 
 async def test_live_only_holds_instead_of_falling_back(tmp_path):
