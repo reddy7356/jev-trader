@@ -37,6 +37,12 @@ def _build_parser() -> argparse.ArgumentParser:
     paper = sub.add_parser("paper", help="run the paper-trading loop")
     paper.add_argument("--blocks", type=int, default=None, help="default 2000 (all, with --replay)")
     paper.add_argument("--replay", type=Path, default=None, help="recorded JSONL to replay")
+    paper.add_argument(
+        "--live-feed",
+        metavar="COIN",
+        default=None,
+        help="paper trade on the LIVE Hyperliquid market (public data, no wallet, no money)",
+    )
     paper.add_argument("--seed", type=int, default=7)
     paper.add_argument("--block-ms", type=int, default=None)
     paper.add_argument("--realtime", action="store_true", help="pace blocks in real time")
@@ -119,7 +125,19 @@ def main(argv: list[str] | None = None) -> int:
 async def _run_paper(args: argparse.Namespace) -> int:
     settings = Settings()
     block_ms = args.block_ms or settings.block_ms
-    if args.replay is not None:
+    if args.live_feed is not None:
+        from jev_trader.backtest import HYPERLIQUID_COSTS
+        from jev_trader.feeds.hyperliquid import HyperliquidFeed
+
+        feed = HyperliquidFeed(args.live_feed, testnet=False, max_blocks=args.blocks)
+        source = f"LIVE Hyperliquid {args.live_feed} (paper fills)"
+        # the real venue's costs unless overridden on the command line
+        settings = settings.model_copy(update={"fee_bps": HYPERLIQUID_COSTS.fee_bps})
+        if args.ack_ms is None:
+            args.ack_ms = HYPERLIQUID_COSTS.ack_ms
+        if args.cancel_ms is None:
+            args.cancel_ms = HYPERLIQUID_COSTS.cancel_ms
+    elif args.replay is not None:
         feed = ReplayFeed(args.replay, max_blocks=args.blocks, realtime=args.realtime)
         source = f"replay {args.replay}"
     else:

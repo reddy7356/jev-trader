@@ -60,8 +60,9 @@ async def stream(
     """Endless book + trade records for `coin`, reconnecting after a dropped socket."""
     while True:
         try:
-            async for rec in _stream_once(coin, url, levels):
-                yield rec
+            async with contextlib.aclosing(_stream_once(coin, url, levels)) as records:
+                async for rec in records:
+                    yield rec
         except (websockets.ConnectionClosed, OSError) as exc:
             print(f"connection lost ({exc!r}); reconnecting")
             await asyncio.sleep(2.0)
@@ -112,20 +113,22 @@ class HyperliquidFeed:
     async def events(self) -> AsyncIterator[BlockEvent]:
         block = 0
         pending: list[Trade] = []
-        async for rec in stream(self._coin, self._url):
-            if rec["kind"] == "trade":
-                pending.append(
-                    Trade(ts=rec["ts"], price=rec["px"], size=rec["sz"], side=rec["side"])
+        # aclosing: shut the websocket now when we stop early, not at interpreter exit
+        async with contextlib.aclosing(stream(self._coin, self._url)) as records:
+            async for rec in records:
+                if rec["kind"] == "trade":
+                    pending.append(
+                        Trade(ts=rec["ts"], price=rec["px"], size=rec["sz"], side=rec["side"])
+                    )
+                    continue
+                if self._max_blocks is not None and block >= self._max_blocks:
+                    return
+                yield BlockEvent(
+                    block=block,
+                    ts=rec["ts"],
+                    book=book_from_record(rec, rec["ts"]),
+                    trades=tuple(pending),
+                    book_updates=1,
                 )
-                continue
-            if self._max_blocks is not None and block >= self._max_blocks:
-                return
-            yield BlockEvent(
-                block=block,
-                ts=rec["ts"],
-                book=book_from_record(rec, rec["ts"]),
-                trades=tuple(pending),
-                book_updates=1,
-            )
-            pending = []
-            block += 1
+                pending = []
+                block += 1
