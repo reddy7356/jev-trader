@@ -60,6 +60,8 @@ class Settings(BaseSettings):
     typesafe_api_key: SecretStr | None = Field(
         default=None, validation_alias="TYPESAFE_API_KEY"
     )
+    # frontier-LLM baseline in scripts/backtest.py only
+    openai_api_key: SecretStr | None = Field(default=None, validation_alias="OPENAI_API_KEY")
     # pin the versioned ID, not the jev-latest alias: thresholds are tuned per version
     jev_model: str = "jev-1.13.0"
     # input tokens only; output is free (docs.typesafe.ai/models)
