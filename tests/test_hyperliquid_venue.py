@@ -110,6 +110,13 @@ async def test_sync_reads_position_fills_and_drops_orders_the_exchange_no_longer
     assert venue.drain_fills() == ()
 
 
+async def test_sync_cancels_orphans_left_by_a_crashed_run():
+    venue, exchange, info = make_venue()
+    info.orders = [{"coin": "SOL", "oid": 55}, {"coin": "BTC", "oid": 56}]
+    await venue.sync()
+    assert ("bulk_cancel", [{"coin": "SOL", "oid": 55}]) in exchange.calls
+
+
 async def test_cancel_all_is_one_bulk_request():
     venue, exchange, _ = make_venue()
     exchange.next_order = ok({"resting": {"oid": 1}})

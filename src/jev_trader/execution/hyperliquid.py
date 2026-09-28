@@ -147,14 +147,20 @@ class HyperliquidVenue:
         self._unrealized = float(position["unrealizedPnl"]) if position else 0.0
 
     async def _reconcile_orders(self) -> None:
-        """The exchange is the source of truth: drop orders it no longer has."""
+        """The exchange is the source of truth: drop orders it no longer has, and
+        cancel orders we did not place (orphans of a crashed run; the account is
+        this bot's alone). Re-arming the dead-man's switch would keep them alive."""
         live = await self._call(self._info.open_orders, self._address)
         live_ids = {str(o["oid"]) for o in live if o["coin"] == self._coin}
         for oid in set(self._orders) - live_ids:
             del self._orders[oid]
-        unknown = live_ids - set(self._orders)
-        if unknown:
-            logger.warning("open orders not placed by this process: %s", sorted(unknown))
+        orphans = sorted(live_ids - set(self._orders))
+        if orphans:
+            logger.warning("cancelling orders not placed by this process: %s", orphans)
+            requests = [{"coin": self._coin, "oid": int(oid)} for oid in orphans]
+            result = await self._call(self._exchange.bulk_cancel, requests)
+            if result.get("status") != "ok":
+                logger.error("orphan cancel failed: %s", result)
 
     async def _pull_fills(self) -> None:
         fills = await self._call(self._info.user_fills_by_time, self._address, self._fills_since_ms)
