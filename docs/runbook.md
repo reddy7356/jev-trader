@@ -10,7 +10,7 @@ steps down this ladder by itself, and each step is safe:
 | Situation | What the bot does | Counts as |
 |---|---|---|
 | Jev answers inside 250 ms | quote per policy | normal |
-| Jev slower than 250 ms (~5% of blocks) | **hold**: keep resting quotes, place nothing new | timeout |
+| Jev slower than 250 ms (~5% of blocks) | **hold**: cancel resting quotes, place nothing new | timeout |
 | Jev returns an error | use the hand-rules judge for this block | fallback |
 | more than 5 Jev errors **in a row** (~2 s outage) | **KILL**: cancel all, close the position, stop | kill |
 | market data older than 2 s | **hold** | - |
