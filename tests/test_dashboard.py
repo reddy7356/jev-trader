@@ -33,3 +33,9 @@ def test_dashboard_renders_every_panel(tmp_path):
         assert panel in page
     assert "not enough data" not in page
     assert "-9.99" in page  # net equity change over the run
+
+
+def test_dashboard_waits_for_a_log_that_does_not_exist_yet(tmp_path):
+    out = tmp_path / "dash.html"
+    write(tmp_path / "missing.jsonl", out)
+    assert "no decisions logged yet" in out.read_text()

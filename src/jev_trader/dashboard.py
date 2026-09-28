@@ -23,6 +23,8 @@ BRIER_WINDOW = 500
 
 def load(log: Path) -> tuple[list[dict], dict[str, str]]:
     decisions, outcomes = [], {}
+    if not log.exists():  # the run hasn't written its first block yet
+        return decisions, outcomes
     for line in log.read_text().splitlines():
         row = json.loads(line)
         if row["kind"] == "decision":
