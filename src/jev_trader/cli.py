@@ -70,6 +70,12 @@ def _build_parser() -> argparse.ArgumentParser:
     live.add_argument("--judge", choices=["heuristic", "always"], default="heuristic")
     live.add_argument("--blocks", type=int, default=None, help="stop after N blocks")
     live.add_argument("--log", type=Path, default=Path("data/live_calibration.jsonl"))
+    live.add_argument(
+        "--risk-memory",
+        type=Path,
+        default=Path("data/live_risk.json"),
+        help="daily-loss and peak-equity baselines kept across restarts",
+    )
 
     kill = sub.add_parser("kill", help="TESTNET kill switch: cancel all orders, flatten")
     kill.add_argument("--coin", default="SOL")
@@ -259,6 +265,7 @@ async def _run_live(args: argparse.Namespace) -> int:
             fallback=fallback,
             settings=settings,
             calibration=calibration,
+            risk_memory_path=args.risk_memory,
         )
         try:
             stats = await loop.run()

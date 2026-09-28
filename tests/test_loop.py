@@ -10,7 +10,7 @@ from jev_trader.domain import Fill, JudgmentSet, Order
 from jev_trader.execution.paper import PaperVenue
 from jev_trader.feeds.synthetic import SyntheticFeed
 from jev_trader.judgment.fallback import HeuristicJudge
-from jev_trader.loop.engine import MarkoutTracker, TradingLoop
+from jev_trader.loop.engine import MarkoutTracker, RiskMemory, TradingLoop
 
 
 def build_loop(tmp_path, *, blocks: int, settings: Settings, judge=None, allow_fallback=True):
@@ -234,3 +234,21 @@ async def test_reconcile_keeps_quotes_that_are_still_on_target(tmp_path, make_ev
 
     await loop._reconcile([])  # stand down: cancel both
     assert venue.open_orders() == {}
+
+
+def test_risk_memory_survives_restart_and_resets_daily_at_midnight(tmp_path):
+    path = tmp_path / "risk.json"
+    noon, next_day = 1_790_000_000.0, 1_790_000_000.0 + 86_400.0
+    memory = RiskMemory.load(path, equity=1000.0, now=noon)
+    memory.update(1100.0, noon)  # new peak
+    memory.update(900.0, noon)  # down 100 on the day
+
+    # crash + restart the same day: baselines come back, the loss is not forgotten
+    restarted = RiskMemory.load(path, equity=900.0, now=noon)
+    assert restarted.day_start_equity == 1000.0
+    assert restarted.peak_equity == 1100.0
+
+    # next UTC day: the daily baseline resets, the peak (drawdown) does not
+    restarted.update(900.0, next_day)
+    assert restarted.day_start_equity == 900.0
+    assert restarted.peak_equity == 1100.0

@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from jev_trader.calibration.log import CalibrationLogger
@@ -69,6 +73,48 @@ class MarkoutTracker:
                 for h in self.horizons
             },
         }
+
+
+@dataclass
+class RiskMemory:
+    """Loss-limit baselines that must survive a restart.
+
+    Without this, a crash-restart loop would reset the daily loss and drawdown
+    limits every time. Saved each block to `path` (None = in memory, for paper).
+    The daily baseline resets at midnight UTC; the equity peak never resets.
+    """
+
+    day: str
+    day_start_equity: float
+    peak_equity: float
+    path: Path | None = None
+
+    @classmethod
+    def load(cls, path: Path | None, equity: float, now: float) -> RiskMemory:
+        today = _utc_day(now)
+        memory = cls(today, equity, equity, path)
+        if path is not None and path.exists():
+            saved = json.loads(path.read_text())
+            memory.peak_equity = max(saved["peak_equity"], equity)
+            if saved["day"] == today:
+                memory.day_start_equity = saved["day_start_equity"]
+            logger.info("risk memory restored from %s: %s", path, saved)
+        return memory
+
+    def update(self, equity: float, now: float) -> None:
+        today = _utc_day(now)
+        if today != self.day:
+            self.day, self.day_start_equity = today, equity
+        self.peak_equity = max(self.peak_equity, equity)
+        if self.path is not None:
+            tmp = self.path.with_suffix(".tmp")
+            data = {k: v for k, v in asdict(self).items() if k != "path"}
+            tmp.write_text(json.dumps(data))
+            os.replace(tmp, self.path)  # atomic: a crash mid-write leaves the old file
+
+
+def _utc_day(ts: float) -> str:
+    return datetime.fromtimestamp(ts, UTC).date().isoformat()
 
 
 @dataclass
@@ -168,6 +214,7 @@ class TradingLoop:
         settings: Settings,
         calibration: CalibrationLogger | None = None,
         allow_fallback: bool = True,
+        risk_memory_path: Path | None = None,
     ) -> None:
         self._feed = feed
         self._venue = venue
@@ -181,7 +228,7 @@ class TradingLoop:
         self._stats = LoopStats(
             starting_cash=settings.starting_cash, usd_per_mtok=settings.jev_usd_per_mtok
         )
-        self._peak_equity = settings.starting_cash
+        self._memory = RiskMemory.load(risk_memory_path, settings.starting_cash, time.time())
         self._api_errors = 0
         self._last_latency_ms = 0.0
         self._pending: deque[tuple[str, int, float]] = deque()
@@ -223,10 +270,10 @@ class TradingLoop:
         pnl = self._venue.pnl()
         equity = self._venue.equity()
         stats.equity_curve.append((event.ts, equity))
-        self._peak_equity = max(self._peak_equity, equity)
-        drawdown = (
-            (self._peak_equity - equity) / self._peak_equity if self._peak_equity > 0 else 0.0
-        )
+        memory = self._memory
+        memory.update(equity, event.ts)
+        peak = memory.peak_equity
+        drawdown = (peak - equity) / peak if peak > 0 else 0.0
 
         features = self._features.update(event)
         health = self._venue.health()
@@ -260,7 +307,7 @@ class TradingLoop:
         verdict = self._risk.check(
             RiskState(
                 position=self._venue.inventory(),
-                daily_pnl=pnl.net,
+                daily_pnl=equity - memory.day_start_equity,
                 drawdown=drawdown,
                 inventory_age_s=self._venue.position_age_s(event.ts),
                 data_age_s=data_age_s,
