@@ -77,6 +77,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="daily-loss and peak-equity baselines kept across restarts",
     )
 
+    dash = sub.add_parser("dashboard", help="HTML dashboard from a calibration log")
+    dash.add_argument("--log", type=Path, default=Path("data/live_calibration.jsonl"))
+    dash.add_argument("--out", type=Path, default=Path("data/dashboard.html"))
+    dash.add_argument("--every", type=float, default=0, help="regenerate every N seconds")
+
     kill = sub.add_parser("kill", help="TESTNET kill switch: cancel all orders, flatten")
     kill.add_argument("--coin", default="SOL")
 
@@ -99,6 +104,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_record(args)
     if args.command == "live":
         return asyncio.run(_run_live(args))
+    if args.command == "dashboard":
+        return _run_dashboard(args)
     if args.command == "kill":
         return asyncio.run(_run_kill(args))
     return 1
@@ -282,6 +289,19 @@ async def _run_kill(args: argparse.Namespace) -> int:
     fill = await venue.flatten()
     print(f"all {args.coin} orders cancelled; position: {fill or 'already flat'}")
     return 0
+
+def _run_dashboard(args: argparse.Namespace) -> int:
+    import time
+
+    from jev_trader.dashboard import write
+
+    while True:
+        write(args.log, args.out)
+        print(f"wrote {args.out.resolve()}")
+        if not args.every:
+            return 0
+        time.sleep(args.every)
+
 
 def _run_record(args: argparse.Namespace) -> int:
     from datetime import datetime

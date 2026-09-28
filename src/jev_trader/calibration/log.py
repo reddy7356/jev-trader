@@ -36,6 +36,7 @@ class CalibrationLogger:
         action: Action,
         latency_ms: float,
         source: str,
+        equity: float | None = None,
     ) -> str:
         decision_id = uuid.uuid4().hex[:12]
         if self._file is None:
@@ -51,6 +52,7 @@ class CalibrationLogger:
             "action": asdict(action),
             "latency_ms": round(latency_ms, 3),
             "source": source,
+            "equity": equity,
             "model": judgments.model if judgments is not None else None,
             "request_id": judgments.request_id if judgments is not None else None,
         }

@@ -364,6 +364,7 @@ class TradingLoop:
                 action=action,
                 latency_ms=latency_ms,
                 source=source,
+                equity=equity,
             )
             if judgments is not None:
                 self._pending.append((decision_id, event.block, state.mid))
