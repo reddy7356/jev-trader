@@ -60,6 +60,8 @@ class Settings(BaseSettings):
     typesafe_api_key: SecretStr | None = Field(
         default=None, validation_alias="TYPESAFE_API_KEY"
     )
+    # Slack/Discord-compatible webhook for operator alerts (optional; alerts always log)
+    alert_webhook_url: str | None = Field(default=None, validation_alias="ALERT_WEBHOOK_URL")
     # frontier-LLM baseline in scripts/backtest.py only
     openai_api_key: SecretStr | None = Field(default=None, validation_alias="OPENAI_API_KEY")
     # pin the versioned ID, not the jev-latest alias: thresholds are tuned per version

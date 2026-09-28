@@ -17,6 +17,7 @@ from jev_trader.domain import Action, ActionKind, Fill, JudgmentSet, Order
 from jev_trader.execution.base import OrderRejected
 from jev_trader.feeds.base import Feed
 from jev_trader.judgment.fallback import HeuristicJudge
+from jev_trader.loop.alerts import Alerts
 from jev_trader.loop.performance import performance
 from jev_trader.policy.engine import compose_action
 from jev_trader.pricing.avellaneda_stoikov import compute_quote
@@ -143,6 +144,7 @@ class LoopStats:
     starting_cash: float = 0.0
     usd_per_mtok: float = 0.0
     equity_curve: list[tuple[float, float]] = field(default_factory=list)
+    alerts: list[str] = field(default_factory=list)
 
     def summary(self) -> dict[str, Any]:
         latencies = sorted(self.latencies_ms)
@@ -197,6 +199,7 @@ class LoopStats:
             "sortino": round(perf["sortino"], 3),
             "max_drawdown": round(perf["max_drawdown"], 6),
             "coverage": round(quoting / self.blocks, 4) if self.blocks else 0.0,
+            "alerts": len(self.alerts),
             **self.markouts.summary(),
         }
 
@@ -215,6 +218,7 @@ class TradingLoop:
         calibration: CalibrationLogger | None = None,
         allow_fallback: bool = True,
         risk_memory_path: Path | None = None,
+        alerts: Alerts | None = None,
     ) -> None:
         self._feed = feed
         self._venue = venue
@@ -228,6 +232,7 @@ class TradingLoop:
         self._stats = LoopStats(
             starting_cash=settings.starting_cash, usd_per_mtok=settings.jev_usd_per_mtok
         )
+        self._alerts = alerts or Alerts(settings.risk, settings.alert_webhook_url)
         self._memory = RiskMemory.load(risk_memory_path, settings.starting_cash, time.time())
         self._api_errors = 0
         self._last_latency_ms = 0.0
@@ -252,6 +257,7 @@ class TradingLoop:
             self._stats.fees = pnl.fees
             self._stats.gas = pnl.gas
             self._stats.equity = self._venue.equity()
+            self._stats.alerts = self._alerts.sent
         return self._stats
 
     async def _tick(self, event: Any) -> None:
@@ -290,7 +296,15 @@ class TradingLoop:
             last_decision_latency_ms=self._last_latency_ms,
         )
 
+        errors_before = self._api_errors
         action, judgments, source, latency_ms = await self._decide(state)
+        self._alerts.check(
+            failed=source == "timeout" or self._api_errors > errors_before,
+            consecutive_errors=self._api_errors,
+            latency_ms=latency_ms,
+            drawdown=drawdown,
+            now=event.ts,
+        )
         self._last_latency_ms = latency_ms
         stats.decisions += 1
         stats.latencies_ms.append(latency_ms)
@@ -320,6 +334,7 @@ class TradingLoop:
             stats.kills += 1
             self._killed = True
             logger.critical("kill switch: %s", "; ".join(verdict.breaches))
+            self._alerts.fire_now("kill", "; ".join(verdict.breaches))
             await self._venue.flatten()
             return
 
