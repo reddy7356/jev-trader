@@ -83,12 +83,15 @@ class RiskMemory:
     Without this, a crash-restart loop would reset the daily loss and drawdown
     limits every time. Saved each block to `path` (None = in memory, for paper).
     The daily baseline resets at midnight UTC; the equity peak never resets.
+    A kill is sticky: `killed` survives restarts until `jev-trader rearm` clears it,
+    so a process supervisor can never restart the bot straight back into trading.
     """
 
     day: str
     day_start_equity: float
     peak_equity: float
     path: Path | None = None
+    killed: str | None = None
 
     @classmethod
     def load(cls, path: Path | None, equity: float, now: float) -> RiskMemory:
@@ -99,6 +102,7 @@ class RiskMemory:
             memory.peak_equity = max(saved["peak_equity"], equity)
             if saved["day"] == today:
                 memory.day_start_equity = saved["day_start_equity"]
+            memory.killed = saved.get("killed")
             logger.info("risk memory restored from %s: %s", path, saved)
         return memory
 
@@ -107,6 +111,9 @@ class RiskMemory:
         if today != self.day:
             self.day, self.day_start_equity = today, equity
         self.peak_equity = max(self.peak_equity, equity)
+        self.save()
+
+    def save(self) -> None:
         if self.path is not None:
             tmp = self.path.with_suffix(".tmp")
             data = {k: v for k, v in asdict(self).items() if k != "path"}
@@ -244,6 +251,11 @@ class TradingLoop:
         return self._killed
 
     async def run(self) -> LoopStats:
+        if self._memory.killed:
+            self._killed = True
+            message = f"refusing to trade: killed earlier ({self._memory.killed}); run rearm"
+            logger.critical(message)
+            self._alerts.fire_now("kill", message)
         try:
             async for event in self._feed.events():
                 if self._killed:
@@ -333,6 +345,8 @@ class TradingLoop:
         if verdict.verdict is Verdict.KILL:
             stats.kills += 1
             self._killed = True
+            self._memory.killed = "; ".join(verdict.breaches)
+            self._memory.save()
             logger.critical("kill switch: %s", "; ".join(verdict.breaches))
             self._alerts.fire_now("kill", "; ".join(verdict.breaches))
             await self._venue.flatten()

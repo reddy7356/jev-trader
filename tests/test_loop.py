@@ -252,3 +252,26 @@ def test_risk_memory_survives_restart_and_resets_daily_at_midnight(tmp_path):
     restarted.update(900.0, next_day)
     assert restarted.day_start_equity == 900.0
     assert restarted.peak_equity == 1100.0
+
+
+async def test_kill_is_sticky_across_restarts(tmp_path):
+    class FailingJudge:
+        async def judge(self, state):
+            raise RuntimeError("jev exploded")
+
+    memory = tmp_path / "risk.json"
+    settings = Settings(log_path=tmp_path / "cal.jsonl", risk=RiskConfig(max_api_errors=0))
+    loop, log = build_loop(tmp_path, blocks=50, settings=settings, judge=FailingJudge())
+    loop._memory = RiskMemory.load(memory, settings.starting_cash, 0.0)
+    await loop.run()
+    log.close()
+    assert loop.killed
+
+    # a supervisor restarts the process with a healthy judge: it must still refuse
+    healthy = Settings(log_path=tmp_path / "cal2.jsonl")
+    restarted, log = build_loop(tmp_path / "b", blocks=50, settings=healthy)
+    restarted._memory = RiskMemory.load(memory, healthy.starting_cash, 0.0)
+    stats = await restarted.run()
+    log.close()
+    assert stats.blocks == 0
+    assert json.loads(memory.read_text())["killed"].startswith("api errors")

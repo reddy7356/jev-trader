@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  macOS process supervision for `jev-trader live` (TESTNET). Install: see docs/runbook.md.
+  Restarts only after a crash (non-zero exit). A kill switch exits cleanly and stays down,
+  and the kill is also sticky in data/live_risk.json until `jev-trader rearm`.
+  __REPO__ is replaced with the repo path at install time.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.jevtrader.live</string>
+  <key>WorkingDirectory</key><string>__REPO__</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/uv</string><string>run</string>
+    <string>jev-trader</string><string>live</string>
+    <string>--order-size</string><string>0.1</string>
+  </array>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>StandardOutPath</key><string>__REPO__/data/live.log</string>
+  <key>StandardErrorPath</key><string>__REPO__/data/live.log</string>
+</dict>
+</plist>

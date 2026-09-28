@@ -77,6 +77,9 @@ def _build_parser() -> argparse.ArgumentParser:
         help="daily-loss and peak-equity baselines kept across restarts",
     )
 
+    rearm = sub.add_parser("rearm", help="clear a sticky kill so `live` may trade again")
+    rearm.add_argument("--risk-memory", type=Path, default=Path("data/live_risk.json"))
+
     dash = sub.add_parser("dashboard", help="HTML dashboard from a calibration log")
     dash.add_argument("--log", type=Path, default=Path("data/live_calibration.jsonl"))
     dash.add_argument("--out", type=Path, default=Path("data/dashboard.html"))
@@ -104,6 +107,8 @@ def main(argv: list[str] | None = None) -> int:
         return _run_record(args)
     if args.command == "live":
         return asyncio.run(_run_live(args))
+    if args.command == "rearm":
+        return _run_rearm(args)
     if args.command == "dashboard":
         return _run_dashboard(args)
     if args.command == "kill":
@@ -224,6 +229,11 @@ def _run_models() -> int:
 def _connect_testnet(settings: Settings, coin: str):  # -> HyperliquidVenue | None
     from jev_trader.execution.hyperliquid import HyperliquidVenue
 
+    env = Path(".env")
+    if env.exists() and env.stat().st_mode & 0o077:
+        print(".env holds trading keys but other users can read it: run `chmod 600 .env`")
+        return None
+
     if settings.hl_private_key is None or not settings.hl_account_address:
         print("set HL_PRIVATE_KEY (API wallet key) and HL_ACCOUNT_ADDRESS (main account)")
         return None
@@ -289,6 +299,17 @@ async def _run_kill(args: argparse.Namespace) -> int:
     fill = await venue.flatten()
     print(f"all {args.coin} orders cancelled; position: {fill or 'already flat'}")
     return 0
+
+def _run_rearm(args: argparse.Namespace) -> int:
+    if not args.risk_memory.exists():
+        print(f"nothing to rearm: {args.risk_memory} does not exist")
+        return 0
+    saved = json.loads(args.risk_memory.read_text())
+    print(f"clearing kill: {saved.get('killed') or 'not killed'}")
+    saved["killed"] = None  # loss baselines stay: rearming is not a fresh allowance
+    args.risk_memory.write_text(json.dumps(saved))
+    return 0
+
 
 def _run_dashboard(args: argparse.Namespace) -> int:
     import time
