@@ -43,6 +43,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="paper trade on the LIVE Hyperliquid market (public data, no wallet, no money)",
     )
+    paper.add_argument(
+        "--order-usd",
+        type=float,
+        default=3000.0,
+        help="with --live-feed: $ per quote (max position = 4x)",
+    )
     paper.add_argument("--seed", type=int, default=7)
     paper.add_argument("--block-ms", type=int, default=None)
     paper.add_argument("--realtime", action="store_true", help="pace blocks in real time")
@@ -127,12 +133,28 @@ async def _run_paper(args: argparse.Namespace) -> int:
     block_ms = args.block_ms or settings.block_ms
     if args.live_feed is not None:
         from jev_trader.backtest import HYPERLIQUID_COSTS
+        from jev_trader.execution.hyperliquid import market, tick_size
         from jev_trader.feeds.hyperliquid import HyperliquidFeed
 
         feed = HyperliquidFeed(args.live_feed, testnet=False, max_blocks=args.blocks)
-        source = f"LIVE Hyperliquid {args.live_feed} (paper fills)"
+        # the coin's real price step and a size in dollars, not coins (25 PUMP is 14 cents)
+        price, sz_decimals = market(args.live_feed)
+        tick = tick_size(price, sz_decimals)
+        size = round(args.order_usd / price, sz_decimals)
+        source = (
+            f"LIVE Hyperliquid {args.live_feed} (paper fills): price {price:g}, tick {tick:g}"
+            f" ({tick / price * 1e4:.2f} bps), order {size:g} (${args.order_usd:,.0f})"
+        )
         # the real venue's costs unless overridden on the command line
-        settings = settings.model_copy(update={"fee_bps": HYPERLIQUID_COSTS.fee_bps})
+        settings = settings.model_copy(
+            update={
+                "fee_bps": HYPERLIQUID_COSTS.fee_bps,
+                "pricing": settings.pricing.model_copy(update={"tick_size": tick}),
+                "risk": settings.risk.model_copy(
+                    update={"max_order_size": size, "max_position": 4 * size}
+                ),
+            }
+        )
         if args.ack_ms is None:
             args.ack_ms = HYPERLIQUID_COSTS.ack_ms
         if args.cancel_ms is None:

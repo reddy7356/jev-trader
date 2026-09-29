@@ -16,8 +16,11 @@ websocket if that lag starts to matter.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import math
 import time
+import urllib.request
 from dataclasses import dataclass
 from typing import Any
 
@@ -29,6 +32,7 @@ from jev_trader.state.events import BlockEvent
 logger = logging.getLogger(__name__)
 
 TESTNET_API_URL = "https://api.hyperliquid-testnet.xyz"
+MAINNET_API_URL = "https://api.hyperliquid.xyz/info"
 MIN_ORDER_USD = 10.0
 POST_ONLY = {"limit": {"tif": "Alo"}}
 
@@ -38,6 +42,27 @@ def round_price(price: float, sz_decimals: int) -> float:
     if price <= 0:
         return price
     return round(float(f"{price:.5g}"), 6 - sz_decimals)
+
+
+def tick_size(price: float, sz_decimals: int) -> float:
+    """Smallest price step at `price` under the same two rules as round_price."""
+    decimals = min(6 - sz_decimals, 4 - math.floor(math.log10(price)))
+    return 10.0**-decimals
+
+
+def market(coin: str) -> tuple[float, int]:
+    """(mark price, szDecimals) for a mainnet perp, from the public info API."""
+    request = urllib.request.Request(
+        MAINNET_API_URL,
+        data=json.dumps({"type": "metaAndAssetCtxs"}).encode(),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=20) as response:
+        meta, contexts = json.load(response)
+    for asset, context in zip(meta["universe"], contexts, strict=True):
+        if asset["name"] == coin:
+            return float(context["markPx"]), asset["szDecimals"]
+    raise ValueError(f"unknown Hyperliquid coin {coin!r}")
 
 
 @dataclass(slots=True)

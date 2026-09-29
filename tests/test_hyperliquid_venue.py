@@ -4,7 +4,7 @@ import pytest
 
 from jev_trader.domain import Order
 from jev_trader.execution.base import OrderRejected
-from jev_trader.execution.hyperliquid import HyperliquidVenue, round_price
+from jev_trader.execution.hyperliquid import HyperliquidVenue, round_price, tick_size
 
 
 def ok(*statuses):
@@ -147,3 +147,12 @@ def test_connect_offers_no_mainnet_switch():
 
     params = inspect.signature(HyperliquidVenue.connect).parameters
     assert not any("mainnet" in name or "url" in name or "testnet" in name for name in params)
+
+
+def test_tick_size_matches_hyperliquid_price_rules():
+    assert tick_size(120.0, sz_decimals=2) == 0.01  # SOL
+    assert tick_size(0.005664, sz_decimals=0) == 1e-6  # PUMP: 6 decimal cap
+    assert tick_size(0.10494, sz_decimals=0) == 1e-5  # HBAR: 5 significant figures
+    assert tick_size(84048.0, sz_decimals=5) == 1.0  # BTC
+    for price, szd in ((120.0, 2), (0.005664, 0), (84048.0, 5)):
+        assert round_price(price + tick_size(price, szd), szd) > round_price(price, szd)
