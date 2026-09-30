@@ -32,8 +32,8 @@ class FakeExchange:
         self.calls.append(("schedule_cancel", when_ms))
         return {"status": "ok", "response": {"type": "default"}}
 
-    def market_close(self, coin):
-        self.calls.append(("market_close", coin))
+    def market_close(self, coin, sz=None):
+        self.calls.append(("market_close", coin, sz))
         return ok({"filled": {"totalSz": "0.5", "avgPx": "120.0", "oid": 9}})
 
 
@@ -138,7 +138,7 @@ async def test_kill_switch_cancels_orders_it_never_placed_and_flattens():
     fill = await venue.flatten()
 
     assert ("bulk_cancel", [{"coin": "SOL", "oid": 55}]) in exchange.calls
-    assert ("market_close", "SOL") in exchange.calls
+    assert any(c[:2] == ("market_close", "SOL") for c in exchange.calls)
     assert fill is not None and fill.side == "sell" and fill.size == 0.5
 
 

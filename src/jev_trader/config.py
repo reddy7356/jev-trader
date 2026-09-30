@@ -77,6 +77,7 @@ class Settings(BaseSettings):
     log_path: Path = Path("data/calibration.jsonl")
     starting_cash: float = 10_000.0
     fee_bps: float = 1.0
+    taker_fee_bps: float = 4.5  # Hyperliquid base tier; exits and the kill switch pay it
     order_ack_ms: float = 0.0
     cancel_ms: float = 0.0
     gas_per_place: float = 0.0

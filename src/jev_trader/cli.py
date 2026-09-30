@@ -171,6 +171,7 @@ async def _run_paper(args: argparse.Namespace) -> int:
     venue = PaperVenue(
         starting_cash=settings.starting_cash,
         fee_bps=settings.fee_bps,
+        taker_fee_bps=settings.taker_fee_bps,
         tick_size=settings.pricing.tick_size,
         max_order_size=settings.risk.max_order_size,
         ack_ms=args.ack_ms if args.ack_ms is not None else settings.order_ack_ms,

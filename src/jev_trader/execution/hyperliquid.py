@@ -309,12 +309,19 @@ class HyperliquidVenue:
                 logger.critical("kill switch cancel failed: %s", result)
         self._orders.clear()
         await self._refresh_position()
+        return await self.reduce(1.0)
+
+    async def reduce(self, fraction: float) -> Fill | None:
+        """Market order closing `fraction` of the position (IOC, taker fee)."""
         if self._position == 0:
             return None
-        result = await self._call(self._exchange.market_close, self._coin)
+        size = round(abs(self._position) * min(max(fraction, 0.0), 1.0), self._sz_decimals)
+        if size <= 0:
+            return None
+        result = await self._call(self._exchange.market_close, self._coin, sz=size)
         status = _first_status(result)
         if "filled" not in status:
-            logger.critical("flatten did not fill: %s", result)
+            logger.critical("market close did not fill: %s", result)
             return None
         filled = status["filled"]
         side = "sell" if self._position > 0 else "buy"

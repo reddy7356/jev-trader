@@ -189,3 +189,17 @@ async def test_gas_is_charged_per_place_and_cancel_even_without_fills(make_event
     # 7 submissions (incl. the post-only reject) and 4 cancelled orders
     assert venue.pnl().gas == pytest.approx(7 * 0.02 + 4 * 0.01)
     assert venue.equity() == pytest.approx(1000.0 - 0.18)
+
+
+async def test_reduce_sells_part_of_the_position_at_the_taker_fee(make_event):
+    venue = make_venue(taker_fee_bps=10.0)
+    venue.on_block(make_event())
+    await venue.place(Order(side="buy", price=99.98, size=4.0))
+    trade = Trade(ts=1.0, price=99.97, size=4.0, side="sell")
+    venue.on_block(make_event(block=1, ts=1.0, mid=99.99, trades=(trade,)))
+
+    fill = await venue.reduce(0.5)
+    assert fill is not None and fill.side == "sell"
+    assert fill.size == pytest.approx(2.0)
+    assert fill.fee == pytest.approx(fill.price * 2.0 * 0.001)  # taker, not maker (0)
+    assert venue.inventory() == pytest.approx(2.0)

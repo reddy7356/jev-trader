@@ -50,9 +50,12 @@ class PaperVenue:
         cancel_ms: float = 0.0,
         gas_per_place: float = 0.0,
         gas_per_cancel: float = 0.0,
+        taker_fee_bps: float = 4.5,
     ) -> None:
         self._starting_cash = starting_cash
         self._fee_rate = fee_bps / 10_000.0
+        # market orders (exits, kill) cross the spread and pay the taker fee
+        self._taker_fee_rate = taker_fee_bps / 10_000.0
         self._tick_size = tick_size
         self._max_order_size = max_order_size
         self._ack_s = ack_ms / 1000.0
@@ -205,6 +208,10 @@ class PaperVenue:
 
     async def flatten(self) -> Fill | None:
         await self.cancel_all()
+        return await self.reduce(1.0)
+
+    async def reduce(self, fraction: float) -> Fill | None:
+        """Market order closing `fraction` of the position at the touch (taker fee)."""
         if self._position == 0:
             return None
         book = self.book()
@@ -212,8 +219,8 @@ class PaperVenue:
             side, price = "sell", book.best_bid.price
         else:
             side, price = "buy", book.best_ask.price
-        qty = abs(self._position)
-        fee = price * qty * self._fee_rate
+        qty = abs(self._position) * min(max(fraction, 0.0), 1.0)
+        fee = price * qty * self._taker_fee_rate
         self._gas += self._gas_per_place
         self._apply_fill(side, price, qty, fee)
         self._fills += 1
