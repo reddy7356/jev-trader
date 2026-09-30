@@ -13,8 +13,11 @@ steps down this ladder by itself, and each step is safe:
 | Jev slower than 250 ms (~5% of blocks) | **hold**: cancel resting quotes, place nothing new | timeout |
 | Jev returns an error | use the hand-rules judge for this block | fallback |
 | more than 5 Jev errors **in a row** (~2 s outage) | **KILL**: cancel all, close the position, stop | kill |
+| Jev says stand down / pull quotes while holding a position | keep one quote on the side that shrinks it | - |
+| Jev says reduce "hard" (urgency >= 2) and the position is losing | **exit**: sell/buy half of it at market (at most every 20 blocks) | exit |
+| open position losing more than $50 | **stop-loss**: close all of it at market, alert | stop_loss |
 | market data older than 2 s | **hold** | - |
-| position > max, or held longer than 15 min | **reduce only**: quote only the side that shrinks it, half size | - |
+| position > max (= one order size), or held longer than 15 min | **reduce only**: quote only the side that shrinks it, half size | - |
 | daily loss > limit, drawdown > limit, position > 1.5x max | **KILL** | kill |
 | process stalls or crashes | Hyperliquid cancels all orders by itself (dead-man's switch) | - |
 | process crashes | launchd restarts it after 30 s; orphan orders are cancelled on the first sync | - |
