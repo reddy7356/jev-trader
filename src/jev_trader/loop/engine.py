@@ -28,6 +28,9 @@ from jev_trader.state.snapshot import MarketState, build_market_state
 logger = logging.getLogger(__name__)
 
 QUOTING_ACTIONS = (ActionKind.QUOTE_BOTH_SIDES, ActionKind.QUOTE_WIDE, ActionKind.WIDEN)
+# standing aside still works an existing position back to flat (HOLD does not:
+# it means stale data or a late decision, so nothing should be sent)
+STAND_ASIDE_ACTIONS = (ActionKind.STAND_DOWN, ActionKind.PULL_QUOTES)
 MARKOUT_HORIZONS = (0, 1, 5, 10, 30)
 
 
@@ -446,7 +449,9 @@ class TradingLoop:
                 self._stats.rejects += 1
 
     def _target_orders(self, action: Action, state: MarketState, reduce_only: bool) -> list[Order]:
-        if action.kind not in QUOTING_ACTIONS:
+        if action.kind in STAND_ASIDE_ACTIONS and state.inventory != 0:
+            action, reduce_only = Action(ActionKind.QUOTE_BOTH_SIDES), True  # one reducing quote
+        elif action.kind not in QUOTING_ACTIONS:
             return []
         if action.kind in (ActionKind.QUOTE_WIDE, ActionKind.WIDEN):
             multiplier = self._settings.policy.wide_spread_multiplier

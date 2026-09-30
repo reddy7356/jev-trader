@@ -292,3 +292,18 @@ def test_orders_never_carry_the_position_past_the_limit(tmp_path, make_state):
 
     reduce = loop._target_orders(quote, make_state(inventory=-3.0), True)
     assert [(o.side, o.size) for o in reduce] == [("buy", 3.0)]  # back to flat, never past it
+
+
+def test_standing_aside_still_works_a_position_back_to_flat(tmp_path, make_state):
+    from jev_trader.domain import Action, ActionKind
+
+    settings = Settings(log_path=tmp_path / "cal.jsonl")
+    loop, log = build_loop(tmp_path, blocks=1, settings=settings)
+    log.close()
+    short = make_state(inventory=-5.0)
+    for kind in (ActionKind.STAND_DOWN, ActionKind.PULL_QUOTES):
+        orders = loop._target_orders(Action(kind), short, False)
+        assert [(o.side, o.size) for o in orders] == [("buy", 5.0)]
+    flat = make_state(inventory=0.0)
+    assert loop._target_orders(Action(ActionKind.STAND_DOWN), flat, False) == []
+    assert loop._target_orders(Action(ActionKind.HOLD), short, False) == []  # stale: send nothing
