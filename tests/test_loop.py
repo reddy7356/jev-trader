@@ -330,3 +330,20 @@ async def test_exits_respect_the_cooldown(tmp_path):
         await loop._exit(exit_half, block)
     assert venue.calls == [0.5, 0.5]  # block 100 and 100 + cooldown only
     assert loop._stats.exits == 2
+
+
+async def test_hard_stop_loss_closes_a_losing_position(tmp_path):
+    def run_with(stop: float):
+        settings = Settings(log_path=tmp_path / "cal.jsonl", risk=RiskConfig(stop_loss_usd=stop))
+        return build_loop(tmp_path / str(stop), blocks=500, settings=settings)
+
+    loop, log = run_with(0.5)
+    stats = await loop.run()
+    log.close()
+    assert stats.stop_losses > 0
+    assert any("[stop_loss]" in alert for alert in stats.alerts)
+
+    loop, log = run_with(1e9)
+    stats = await loop.run()
+    log.close()
+    assert stats.stop_losses == 0

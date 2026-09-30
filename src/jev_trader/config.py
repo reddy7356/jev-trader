@@ -20,6 +20,8 @@ class RiskConfig(BaseModel):
     max_decision_latency_ms: float = 250.0
     max_api_errors: int = 5  # consecutive
     kill_position_multiplier: float = 1.5
+    # close the whole position at market once it loses this much ($), whatever Jev says
+    stop_loss_usd: float = 50.0
 
 
 class PolicyConfig(BaseModel):

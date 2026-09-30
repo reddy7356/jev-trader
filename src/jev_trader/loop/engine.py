@@ -141,6 +141,7 @@ class LoopStats:
     rejects: int = 0
     fills: int = 0
     exits: int = 0
+    stop_losses: int = 0
     fees: float = 0.0
     gas: float = 0.0
     model_mismatches: int = 0
@@ -185,6 +186,7 @@ class LoopStats:
             "rejects": self.rejects,
             "fills": self.fills,
             "exits": self.exits,
+            "stop_losses": self.stop_losses,
             "actions": dict(sorted(self.actions.items())),
             "avg_latency_ms": round(average, 3),
             "p50_latency_ms": round(p50, 3),
@@ -357,6 +359,17 @@ class TradingLoop:
             self._alerts.fire_now("kill", "; ".join(verdict.breaches))
             await self._venue.flatten()
             return
+
+        stop = self._settings.risk.stop_loss_usd
+        if self._venue.inventory() != 0 and pnl.unrealized < -stop:
+            # Rule 3: hard stop-loss, owned by code; send nothing else this block
+            fill = await self._venue.reduce(1.0)
+            stats.stop_losses += 1
+            stats.fills += fill is not None
+            message = f"stop-loss: position lost ${-pnl.unrealized:.2f} > ${stop:.2f}, closed"
+            logger.warning(message)
+            self._alerts.fire_now("stop_loss", message)
+            action = Action(ActionKind.HOLD, reason=message)
 
         reduce_only = verdict.verdict is Verdict.REDUCE_ONLY
         if verdict.verdict is Verdict.HOLD:
