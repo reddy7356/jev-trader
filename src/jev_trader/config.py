@@ -35,6 +35,10 @@ class PolicyConfig(BaseModel):
     low_confidence_scale: float = 0.5
     wide_spread_multiplier: float = 2.0
     kelly_cap: float = 0.25
+    # Jev says "hard" (2) or "immediate" (3) on a losing position: cut part of it at market
+    exit_pressure: float = 2.0
+    exit_fraction: float = 0.5
+    exit_cooldown_blocks: int = 20
 
 
 class PricingConfig(BaseModel):

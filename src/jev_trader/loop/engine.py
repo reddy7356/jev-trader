@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 QUOTING_ACTIONS = (ActionKind.QUOTE_BOTH_SIDES, ActionKind.QUOTE_WIDE, ActionKind.WIDEN)
 # standing aside still works an existing position back to flat (HOLD does not:
 # it means stale data or a late decision, so nothing should be sent)
-STAND_ASIDE_ACTIONS = (ActionKind.STAND_DOWN, ActionKind.PULL_QUOTES)
+STAND_ASIDE_ACTIONS = (ActionKind.STAND_DOWN, ActionKind.PULL_QUOTES, ActionKind.EXIT)
 MARKOUT_HORIZONS = (0, 1, 5, 10, 30)
 
 
@@ -140,6 +140,7 @@ class LoopStats:
     kills: int = 0
     rejects: int = 0
     fills: int = 0
+    exits: int = 0
     fees: float = 0.0
     gas: float = 0.0
     model_mismatches: int = 0
@@ -183,6 +184,7 @@ class LoopStats:
             "kills": self.kills,
             "rejects": self.rejects,
             "fills": self.fills,
+            "exits": self.exits,
             "actions": dict(sorted(self.actions.items())),
             "avg_latency_ms": round(average, 3),
             "p50_latency_ms": round(p50, 3),
@@ -248,6 +250,7 @@ class TradingLoop:
         self._last_latency_ms = 0.0
         self._pending: deque[tuple[str, int, float]] = deque()
         self._killed = False
+        self._last_exit_block = -(10**9)
 
     @property
     def killed(self) -> bool:
@@ -367,6 +370,8 @@ class TradingLoop:
                 reason=f"{action.reason} | reduce_only: {'; '.join(verdict.breaches)}",
             )
 
+        if action.kind is ActionKind.EXIT:
+            await self._exit(action, event.block)
         await self._execute(action, state, reduce_only)
 
         stats.actions[action.kind.value] = stats.actions.get(action.kind.value, 0) + 1
@@ -416,6 +421,20 @@ class TradingLoop:
         self._api_errors = 0  # limit is on consecutive errors: one blip must not kill 24/7
         action = compose_action(judgments, state, self._settings.policy, self._settings.risk)
         return action, judgments, judgments.source, latency_ms
+
+    async def _exit(self, action: Action, block: int) -> None:
+        """Rule 2: Jev says reduce now and the position is losing: market-sell part of it.
+
+        At most once per cooldown; in between, the reducing quote (rule 1) keeps working.
+        """
+        if block - self._last_exit_block < self._settings.policy.exit_cooldown_blocks:
+            return
+        self._last_exit_block = block
+        fill = await self._venue.reduce(action.size_scale)
+        if fill is not None:
+            self._stats.exits += 1
+            self._stats.fills += 1
+            logger.info("exit %s %.4f @ %.6g: %s", fill.side, fill.size, fill.price, action.reason)
 
     async def _execute(self, action: Action, state: MarketState, reduce_only: bool) -> None:
         await self._reconcile(self._target_orders(action, state, reduce_only))

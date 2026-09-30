@@ -307,3 +307,26 @@ def test_standing_aside_still_works_a_position_back_to_flat(tmp_path, make_state
     flat = make_state(inventory=0.0)
     assert loop._target_orders(Action(ActionKind.STAND_DOWN), flat, False) == []
     assert loop._target_orders(Action(ActionKind.HOLD), short, False) == []  # stale: send nothing
+
+
+async def test_exits_respect_the_cooldown(tmp_path):
+    from jev_trader.domain import Action, ActionKind
+
+    class Venue:
+        def __init__(self):
+            self.calls: list[float] = []
+
+        async def reduce(self, fraction):
+            self.calls.append(fraction)
+            return Fill("buy", 100.0, 1.0, 0.0)
+
+    settings = Settings(log_path=tmp_path / "cal.jsonl")
+    loop, log = build_loop(tmp_path, blocks=1, settings=settings)
+    log.close()
+    venue = loop._venue = Venue()
+    exit_half = Action(ActionKind.EXIT, size_scale=0.5)
+    cooldown = settings.policy.exit_cooldown_blocks
+    for block in (100, 101, 100 + cooldown - 1, 100 + cooldown):
+        await loop._exit(exit_half, block)
+    assert venue.calls == [0.5, 0.5]  # block 100 and 100 + cooldown only
+    assert loop._stats.exits == 2

@@ -81,3 +81,16 @@ def test_inventory_skew_sign(make_judgments, make_state):
     )
     assert long_action.skew < 0
     assert short_action.skew > 0
+
+
+def test_exit_when_jev_says_reduce_on_a_losing_position(make_judgments, make_state):
+    losing = make_state(inventory=-50.0, unrealized_pnl=-10.0)
+    hard = make_judgments(inventory_pressure=2.0, toxic_flow=0.9)
+    action = compose_action(hard, losing, POLICY, RISK)
+    assert action.kind is ActionKind.EXIT  # getting out beats pulling quotes
+    assert action.size_scale == POLICY.exit_fraction
+
+    winning = make_state(inventory=-50.0, unrealized_pnl=10.0)
+    assert compose_action(hard, winning, POLICY, RISK).kind is not ActionKind.EXIT
+    mild = make_judgments(inventory_pressure=1.9)
+    assert compose_action(mild, losing, POLICY, RISK).kind is not ActionKind.EXIT

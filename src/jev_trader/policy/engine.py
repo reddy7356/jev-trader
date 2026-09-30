@@ -19,6 +19,14 @@ def compose_action(
     if state.drawdown > risk.max_drawdown:
         return Action(ActionKind.KILL, reason=f"drawdown {state.drawdown:.4f}")
 
+    losing = state.inventory != 0 and state.unrealized_pnl < 0
+    if losing and judgments.inventory_pressure >= config.exit_pressure:
+        return Action(
+            ActionKind.EXIT,
+            size_scale=config.exit_fraction,
+            reason=f"inventory pressure {judgments.inventory_pressure:.2f} on a losing position",
+        )
+
     if judgments.toxic_flow > config.toxic_pull:
         return Action(
             ActionKind.PULL_QUOTES,

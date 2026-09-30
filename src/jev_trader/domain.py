@@ -11,6 +11,7 @@ class ActionKind(str, Enum):
     PULL_QUOTES = "pull_quotes"
     WIDEN = "widen"
     HOLD = "hold"
+    EXIT = "exit"  # market order cutting part of a losing position
     KILL = "kill"
 
 
