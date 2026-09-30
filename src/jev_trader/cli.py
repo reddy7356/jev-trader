@@ -47,7 +47,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--order-usd",
         type=float,
         default=3000.0,
-        help="with --live-feed: $ per quote (max position = 4x)",
+        help="with --live-feed: $ per quote (also the max position)",
     )
     paper.add_argument("--seed", type=int, default=7)
     paper.add_argument("--block-ms", type=int, default=None)
@@ -78,7 +78,7 @@ def _build_parser() -> argparse.ArgumentParser:
     live = sub.add_parser("live", help="quote on Hyperliquid TESTNET (needs HL_* env vars)")
     live.add_argument("--coin", default="SOL")
     live.add_argument("--order-size", type=float, required=True, help="per-quote size in coin")
-    live.add_argument("--max-position", type=float, default=None, help="default 4x order size")
+    live.add_argument("--max-position", type=float, default=None, help="default = order size")
     live.add_argument("--judge", choices=["heuristic", "always"], default="heuristic")
     live.add_argument("--blocks", type=int, default=None, help="stop after N blocks")
     live.add_argument("--log", type=Path, default=Path("data/live_calibration.jsonl"))
@@ -151,7 +151,7 @@ async def _run_paper(args: argparse.Namespace) -> int:
                 "fee_bps": HYPERLIQUID_COSTS.fee_bps,
                 "pricing": settings.pricing.model_copy(update={"tick_size": tick}),
                 "risk": settings.risk.model_copy(
-                    update={"max_order_size": size, "max_position": 4 * size}
+                    update={"max_order_size": size, "max_position": size}
                 ),
             }
         )
@@ -294,7 +294,7 @@ async def _run_live(args: argparse.Namespace) -> int:
     if venue is None:
         return 1
     await venue.sync()
-    max_position = args.max_position or 4 * args.order_size
+    max_position = args.max_position or args.order_size
     settings = settings.model_copy(
         update={
             "starting_cash": venue.equity(),

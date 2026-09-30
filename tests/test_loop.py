@@ -275,3 +275,20 @@ async def test_kill_is_sticky_across_restarts(tmp_path):
     log.close()
     assert stats.blocks == 0
     assert json.loads(memory.read_text())["killed"].startswith("api errors")
+
+
+def test_orders_never_carry_the_position_past_the_limit(tmp_path, make_state):
+    from jev_trader.domain import Action, ActionKind
+
+    settings = Settings(
+        log_path=tmp_path / "cal.jsonl", risk=RiskConfig(max_position=10.0, max_order_size=10.0)
+    )
+    loop, log = build_loop(tmp_path, blocks=1, settings=settings)
+    log.close()
+    quote = Action(ActionKind.QUOTE_BOTH_SIDES)
+
+    sizes = {o.side: o.size for o in loop._target_orders(quote, make_state(inventory=8.0), False)}
+    assert sizes == {"buy": 2.0, "sell": 10.0}  # only 2 of room left on the long side
+
+    reduce = loop._target_orders(quote, make_state(inventory=-3.0), True)
+    assert [(o.side, o.size) for o in reduce] == [("buy", 3.0)]  # back to flat, never past it

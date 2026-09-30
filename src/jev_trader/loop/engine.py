@@ -466,13 +466,16 @@ class TradingLoop:
             tick_size=self._settings.pricing.tick_size,
         )
         size = self._settings.risk.max_order_size * action.size_scale
-        if size <= 0:
-            return []
+        inventory = state.inventory
+        # never place an order that could carry the position past the limit (or,
+        # reduce-only, past flat): a fill can then at most reach the limit exactly
+        buy_room = -inventory if reduce_only else self._settings.risk.max_position - inventory
+        sell_room = inventory if reduce_only else self._settings.risk.max_position + inventory
         orders: list[Order] = []
-        if not reduce_only or state.inventory < 0:
-            orders.append(Order(side="buy", price=quote.bid, size=size))
-        if not reduce_only or state.inventory > 0:
-            orders.append(Order(side="sell", price=quote.ask, size=size))
+        if (buy := min(size, buy_room)) > 1e-9:
+            orders.append(Order(side="buy", price=quote.bid, size=buy))
+        if (sell := min(size, sell_room)) > 1e-9:
+            orders.append(Order(side="sell", price=quote.ask, size=sell))
         return orders
 
     def _label_matured(self, block: int, mid: float) -> None:
