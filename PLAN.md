@@ -217,8 +217,11 @@ Not in scope yet: news and whale feeds (no reliable automated verification); mar
 warnings and a hand-kept US event calendar (8:15–10:30 ET daily, CPI/jobs/ISM/FOMC) stand in.
 
 - [ ] Record AAVE + BTC together for 3 days (`data/rec_AAVE_3d.jsonl`, `data/rec_BTC_3d.jsonl`)
-- [ ] Two-coin feed (AAVE + BTC in one clock) and features: 5/15/60-min changes,
+      — running since Thu 2026-10-01 ~1 PM ET, ends ~Sun 1 PM ET
+- [x] Two-coin feed (AAVE + BTC in one clock) and features: 5/15/60-min changes,
       5-min volume vs prior-12 median, book history (30 s snapshots, 5 min)
+      — `gatekeeper/tape.py`: `Tape` per coin (missing history = None = NO TRADE) and
+        `merged_records` streaming recordings in time order. Live two-coin feed: later
 - [ ] US event calendar (fixed daily window + dated releases)
 - [ ] BTC risk filter (code + Jev)
 - [ ] AAVE entry gatekeeper (code + Jev), stop/target proposal
