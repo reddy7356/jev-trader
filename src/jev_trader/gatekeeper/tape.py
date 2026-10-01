@@ -9,6 +9,7 @@ missing data means NO TRADE.
 from __future__ import annotations
 
 import heapq
+import itertools
 import json
 import statistics
 from collections import deque
@@ -18,7 +19,7 @@ from pathlib import Path
 
 HISTORY_S = 2 * 3600.0
 SNAPSHOT_EVERY_S = 30.0
-DEPTH_LEVELS = 5
+DEPTH_LEVELS = 10  # the recorder keeps 10; AAVE's top 5 alone flip on noise
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,6 +27,9 @@ class Snapshot:
     ts: float
     bid_depth: float  # $ notional, top DEPTH_LEVELS levels
     ask_depth: float
+    mid: float = 0.0
+    best_bid_usd: float = 0.0  # $ resting at the best bid / best ask
+    best_ask_usd: float = 0.0
 
 
 class Tape:
@@ -50,7 +54,8 @@ class Tape:
         self._mids.append((ts, self.mid))
         if not self.snapshots or ts - self.snapshots[-1].ts >= SNAPSHOT_EVERY_S:
             depth = [sum(px * sz for px, sz in side[:DEPTH_LEVELS]) for side in (bids, asks)]
-            self.snapshots.append(Snapshot(ts, *depth))
+            best = [side[0][0] * side[0][1] for side in (bids, asks)]
+            self.snapshots.append(Snapshot(ts, *depth, self.mid, *best))
         cutoff = ts - HISTORY_S
         while self._mids and self._mids[0][0] < cutoff:
             self._mids.popleft()
@@ -100,6 +105,29 @@ class Tape:
         recent = [(usd, buy) for ts, usd, buy in self._trades if ts >= cutoff]
         total = sum(usd for usd, _ in recent)
         return sum(usd for usd, buy in recent if buy) / total if total > 0 else None
+
+    def timeline(self, slices: int = 10) -> list[dict[str, float]]:
+        """The last `slices` 30 s steps, oldest first: what price, flow and book did.
+
+        Lets a judge see relationships a 5-min total hides, e.g. heavy buying while
+        price stays flat (absorption) versus buying that lifts price (acceptance).
+        """
+        snaps = list(self.snapshots)[-(slices + 1) :]
+        steps = []
+        for before, after in itertools.pairwise(snaps):
+            trades = [(usd, buy) for ts, usd, buy in self._trades if before.ts <= ts < after.ts]
+            steps.append(
+                {
+                    "mid_change_bps": round((after.mid / before.mid - 1) * 1e4, 2),
+                    "bought_usd_k": round(sum(u for u, buy in trades if buy) / 1e3, 1),
+                    "sold_usd_k": round(sum(u for u, buy in trades if not buy) / 1e3, 1),
+                    "bid_depth_usd_k": round(after.bid_depth / 1e3, 1),
+                    "ask_depth_usd_k": round(after.ask_depth / 1e3, 1),
+                    "best_bid_usd_k": round(after.best_bid_usd / 1e3, 1),
+                    "best_ask_usd_k": round(after.best_ask_usd / 1e3, 1),
+                }
+            )
+        return steps
 
     def bids_stronger_for(self, seconds: float) -> bool | None:
         """True if every 30 s snapshot in the last `seconds` had more bid than ask depth."""

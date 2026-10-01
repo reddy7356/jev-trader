@@ -60,7 +60,7 @@ def _pct(value: float | None) -> float | None:
 
 
 def tape_state(tape: Tape) -> dict[str, Any]:
-    """Compact numbers for Jev: % changes, flow, and the last 10 depth snapshots ($k)."""
+    """Compact numbers for Jev: % changes, flow, and a 5-minute timeline in 30 s steps."""
     return {
         "mid": round(tape.mid, 6),
         "change_pct": {f"{m}m": _pct(tape.change(m)) for m in (1, 5, 15, 60)},
@@ -69,10 +69,7 @@ def tape_state(tape: Tape) -> dict[str, Any]:
         "aggressive_buy_share": {
             f"{m}m": None if (s := tape.buy_share(m)) is None else round(s, 2) for m in (1, 5)
         },
-        "depth_30s_snapshots_usd_k": [
-            [round(s.bid_depth / 1000, 1), round(s.ask_depth / 1000, 1)]
-            for s in list(tape.snapshots)[-10:]
-        ],
+        "timeline_30s_oldest_first": tape.timeline(10),
     }
 
 

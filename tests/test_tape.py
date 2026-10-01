@@ -51,3 +51,21 @@ def test_merged_records_interleave_coins_in_time_order(tmp_path):
     btc.write_text("".join(json.dumps({"kind": "book", "ts": t}) + "\n" for t in (2, 4)))
     order = [(coin, rec["ts"]) for coin, rec in merged_records({"AAVE": aave, "BTC": btc})]
     assert order == [("AAVE", 1), ("BTC", 2), ("AAVE", 3), ("BTC", 4), ("AAVE", 5)]
+
+
+def test_timeline_shows_each_30s_step_of_price_flow_and_book():
+    tape = Tape("AAVE")
+    for step in range(4):  # snapshots at 0, 30, 60, 90 s
+        ts = step * 30.0
+        mid = 100.0 if step < 2 else 100.1  # flat, flat, +10 bps, flat
+        tape.on_book(ts, [[mid - 0.005, 50.0]], [[mid + 0.005, 10.0 * (step + 1)]])
+        tape.on_trade(ts + 5, mid, 20.0, "buy")  # $2k bought in every step
+        if step == 1:
+            tape.on_trade(ts + 6, mid, 30.0, "sell")
+    steps = tape.timeline(10)
+    assert len(steps) == 3  # 4 snapshots = 3 steps, oldest first
+    assert [s["mid_change_bps"] for s in steps] == [0.0, 10.0, 0.0]
+    assert steps[0]["bought_usd_k"] == 2.0 and steps[0]["sold_usd_k"] == 0.0
+    assert steps[1]["sold_usd_k"] == 3.0  # the sell in the 30-60 s step
+    assert steps[2]["best_ask_usd_k"] == 4.0  # 40 AAVE x ~$100 at the best ask
+    assert steps[2]["bid_depth_usd_k"] == 5.0
