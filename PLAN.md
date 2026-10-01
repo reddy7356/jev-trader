@@ -193,6 +193,45 @@ once and handled correctly.
 
 ---
 
+## Phase 7 — AAVE long-only gatekeeper (replaces market making)
+
+Market making showed no edge at base-tier fees: 7 policy-A sessions netted −$213, and
+session 7 hit the $250 daily kill in 2.2 US-morning hours, bleeding to informed flow
+(−3.3 bps markouts). The new strategy trades rarely, long only, with a fixed stop and
+targets. **Default answer: NO TRADE.**
+
+Three gates, each = deterministic code rules + a few Jev judgment questions:
+
+1. **BTC risk filter** — blocks AAVE longs (or forces exit) when BTC falls > 1% in 15 min
+   with accelerating selling, > 2.5% in 60 min, or a scheduled event is within 30 min.
+   Jev judges: persistent BTC sell pressure (bids pulled, offers replenishing).
+2. **AAVE entry gatekeeper** — LONG ELIGIBLE only if BTC permits, 5-min volume >= 1.5x
+   the median of the prior 12, bids stronger than asks for >= 3 min, R:R to T1 >= 1.5,
+   risk <= 0.25% of equity, daily loss limit not reached. Jev judges: demand accepted by
+   price; bids pulling / offers replenishing / buying failing to lift price.
+3. **Position monitor** — stop just below the recent 15-min low (never widened),
+   T1 = 1.5R: sell 50% and move the stop to entry, T2 = 3R, time stop, exit on BTC
+   risk-off. Never average down. Jev judges: is the entry thesis still valid?
+
+Not in scope yet: news and whale feeds (no reliable automated verification); market-based
+warnings and a hand-kept US event calendar (8:15–10:30 ET daily, CPI/jobs/ISM/FOMC) stand in.
+
+- [ ] Record AAVE + BTC together for 3 days (`data/rec_AAVE_3d.jsonl`, `data/rec_BTC_3d.jsonl`)
+- [ ] Two-coin feed (AAVE + BTC in one clock) and features: 5/15/60-min changes,
+      5-min volume vs prior-12 median, book history (30 s snapshots, 5 min)
+- [ ] US event calendar (fixed daily window + dated releases)
+- [ ] BTC risk filter (code + Jev)
+- [ ] AAVE entry gatekeeper (code + Jev), stop/target proposal
+- [ ] Long-only paper simulator: entry, stop, T1 partial + stop to entry, T2, time stop
+- [ ] Position monitor (code + Jev)
+- [ ] Replay the 3-day recording: how often it trades, net of fees, per-trade R
+- [ ] Live paper sessions only if the replay beats fees
+
+**Acceptance:** on replay and then live paper, losing trades stay at <= 1R, most sessions
+end flat or slightly positive, and the total beats fees across many sessions.
+
+---
+
 ## Non-goals (the honest contract)
 
 Jev cannot: generate text or design the strategy, chain dependent judgments in one
