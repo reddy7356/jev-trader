@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from jev_trader.gatekeeper.calendar import event_block
-from jev_trader.gatekeeper.tape import Tape
+from jev_trader.gatekeeper.tape import DEPTH_LEVELS, Tape, fill_price
 
 STALE_S = 10.0  # a tape not updated for this long is stale
 # BTC (prompt 2)
@@ -30,6 +30,8 @@ STOP_BUFFER = 0.0005  # stop 5 bps under the 15-min low
 MIN_RISK_PCT, MAX_RISK_PCT = 0.0025, 0.02  # closer stops are noise; farther are too slow
 TAKER_FEE, MAKER_FEE = 0.00045, 0.00015
 MIN_REWARD_TO_RISK = 1.5
+MAX_BOOK_SHARE = 0.5  # buy at most half of the offers visible in DEPTH_LEVELS levels
+MIN_TRADE_USD = 100.0  # below this the visible book is too thin to bother
 # Jev (probabilities; the user's 0.8 confidence rule on the deciding judgment)
 DEMAND_ACCEPTED_MIN = 0.8
 ABSORPTION_MAX = 0.2
@@ -78,11 +80,22 @@ def btc_risk_off(btc: Tape, now: float) -> list[str]:
 
 
 def plan_trade(aave: Tape, account: Account) -> tuple[TradePlan | None, list[str]]:
-    """Entry at the ask, stop under the 15-min low, targets 1.5R and 3R net of fees."""
+    """Market buy walking the offers, stop under the 15-min low, targets 1.5R / 3R net of fees.
+
+    Size is capped at half the visible offers, and the entry price is the average the
+    buy would really pay through those levels (slippage), not just the best ask.
+    """
     low = aave.low(15)
     if low is None:
         return None, ["AAVE 15-min low unavailable"]
-    entry, stop = aave.ask, low * (1 - STOP_BUFFER)
+    stop = low * (1 - STOP_BUFFER)
+    visible = sum(px * sz for px, sz in aave.asks[:DEPTH_LEVELS])
+    first_risk = aave.ask - stop + aave.ask * 2 * TAKER_FEE
+    cap = min(MAX_BOOK_SHARE * visible, account.equity) / aave.ask  # no leverage either
+    size = min(account.equity * RISK_PCT / first_risk, cap) if first_risk > 0 else 0.0
+    if size * aave.ask < MIN_TRADE_USD:
+        return None, [f"AAVE book too thin (${visible:,.0f} of offers in {DEPTH_LEVELS} levels)"]
+    entry = fill_price(aave.asks, size)
     risk = entry - stop
     if not MIN_RISK_PCT <= risk / entry <= MAX_RISK_PCT:
         allowed = f"{MIN_RISK_PCT:.2%}-{MAX_RISK_PCT:.0%}"
@@ -92,7 +105,7 @@ def plan_trade(aave: Tape, account: Account) -> tuple[TradePlan | None, list[str
     target_cost = entry * (TAKER_FEE + MAKER_FEE)
     target1 = entry + MIN_REWARD_TO_RISK * risk_net + target_cost
     target2 = entry + 2 * MIN_REWARD_TO_RISK * risk_net + target_cost
-    quantity = min(account.equity * RISK_PCT / risk_net, account.equity / entry)  # no leverage
+    quantity = min(account.equity * RISK_PCT / risk_net, size)  # entry priced for `size`
     plan = TradePlan(entry, stop, quantity, target1, target2)
     reasons = []
     if account.realized_today - plan.planned_loss < -DAILY_LOSS_USD:

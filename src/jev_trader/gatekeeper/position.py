@@ -1,8 +1,9 @@
 """Phase 7 position monitor and long-only paper fills (the user's prompt 3).
 
-Spot-like: long only, no leverage. Entry buys at the ask (taker). Every AAVE book
-update runs `Position.check`; stops and forced exits sell at the bid (taker), targets
-sell at the target price (maker). The stop only ever moves up. Never averages down.
+Spot-like: long only, no leverage. Entry is a market buy priced through the offers
+(see gates.plan_trade). Every AAVE book update runs `Position.check`; stops and forced
+exits are market sells walking the bids (taker), targets sell at the target (maker).
+The stop only ever moves up. Never averages down.
 """
 
 from __future__ import annotations
@@ -10,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from jev_trader.gatekeeper.gates import MAKER_FEE, TAKER_FEE, TradePlan, btc_risk_off
-from jev_trader.gatekeeper.tape import Tape
+from jev_trader.gatekeeper.tape import Tape, fill_price
 
 TIME_STOP_S = 3600.0
 THESIS_FAILED_MIN = 0.8  # Jev probability that the entry thesis failed
@@ -54,9 +55,9 @@ class Position:
         self.quantity -= quantity
         self.exits.append((ts, reason, price, quantity))
 
-    def close(self, ts: float, reason: str, bid: float) -> None:
-        """Sell everything left at the bid (market order, taker fee)."""
-        self._sell(ts, reason, bid, self.quantity, TAKER_FEE)
+    def close(self, ts: float, reason: str, aave: Tape) -> None:
+        """Sell everything left with a market order walking the bids (taker fee)."""
+        self._sell(ts, reason, fill_price(aave.bids, self.quantity), self.quantity, TAKER_FEE)
 
     def check(
         self, aave: Tape, btc: Tape, now: float, thesis_failed: float | None = None
@@ -75,7 +76,7 @@ class Position:
         elif not self.t1_done and now - self.opened >= TIME_STOP_S:
             exit_all = "time stop: no T1 within 60 min"
         if exit_all:
-            self.close(now, exit_all, bid)
+            self.close(now, exit_all, aave)
             return exit_all
         if not self.t1_done and bid >= plan.target1:
             self._sell(now, "T1: sold 50%", plan.target1, self.quantity / 2, MAKER_FEE)

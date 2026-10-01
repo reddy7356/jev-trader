@@ -37,6 +37,8 @@ class Tape:
         self.coin = coin
         self.ts = 0.0
         self.bid = self.ask = 0.0
+        self.bids: list = []  # latest book levels, [[price, size], ...] best first
+        self.asks: list = []
         self._mids: deque[tuple[float, float]] = deque()
         self._trades: deque[tuple[float, float, bool]] = deque()  # ts, $ notional, is_buy
         self.snapshots: deque[Snapshot] = deque()
@@ -51,6 +53,7 @@ class Tape:
 
     def on_book(self, ts: float, bids: list, asks: list) -> None:
         self.ts, self.bid, self.ask = ts, bids[0][0], asks[0][0]
+        self.bids, self.asks = bids, asks
         self._mids.append((ts, self.mid))
         if not self.snapshots or ts - self.snapshots[-1].ts >= SNAPSHOT_EVERY_S:
             depth = [sum(px * sz for px, sz in side[:DEPTH_LEVELS]) for side in (bids, asks)]
@@ -135,6 +138,23 @@ class Tape:
             return None
         recent = [s for s in self.snapshots if s.ts >= self.ts - seconds]
         return bool(recent) and all(s.bid_depth > s.ask_depth for s in recent)
+
+
+def fill_price(levels: list, quantity: float) -> float:
+    """Average price of a market order of `quantity` walking `levels` (best first).
+
+    Anything beyond the recorded levels is assumed to fill at the last one; callers
+    cap orders well inside visible depth, so that tail should not occur.
+    """
+    left, cost = quantity, 0.0
+    for price, size in levels:
+        take = min(left, size)
+        cost += take * price
+        left -= take
+        if left <= 0:
+            break
+    cost += max(left, 0.0) * levels[-1][0]
+    return cost / quantity if quantity > 0 else levels[0][0]
 
 
 def merged_records(paths: dict[str, Path]) -> Iterator[tuple[str, dict]]:

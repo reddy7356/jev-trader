@@ -15,7 +15,7 @@ ACCOUNT = Account(equity=10_000.0, realized_today=0.0)
 
 
 def market(*, btc_60m: float = 0.0, aave_last5: float = 0.003, spike: float = 4.0,
-           bid_heavy_s: float = 300.0, buy_share: float = 0.7):
+           bid_heavy_s: float = 300.0, buy_share: float = 0.7, ask_size: float = 20.0):
     """66 minutes of tape. AAVE dips to 99 at -15 min then climbs; BTC drifts by btc_60m."""
     aave, btc = Tape("AAVE"), Tape("BTC")
     for second in range(0, 66 * 60 + 1, 10):
@@ -28,7 +28,9 @@ def market(*, btc_60m: float = 0.0, aave_last5: float = 0.003, spike: float = 4.
         else:
             mid = 100.0 * (1 + aave_last5 * (300 - left) / 300)
         bids = 30.0 if left <= bid_heavy_s else 10.0
-        aave.on_book(ts, [[mid - 0.005, bids]], [[mid + 0.005, 20.0]])
+        asks = [[mid + 0.005 + 0.01 * k, ask_size] for k in range(10)]  # 10 levels
+        bid_levels = [[mid - 0.005 - 0.01 * k, bids * ask_size / 20] for k in range(10)]
+        aave.on_book(ts, bid_levels, asks)
         btc_mid = 80_000.0 * (1 + btc_60m * second / 3600)  # steady drift, btc_60m per hour
         btc.on_book(ts, [[btc_mid - 1, 1.0]], [[btc_mid + 1, 1.0]])
         size = 10.0 * (spike if left <= 300 else 1.0)
@@ -40,7 +42,7 @@ def market(*, btc_60m: float = 0.0, aave_last5: float = 0.003, spike: float = 4.
 
 
 def test_all_rules_pass_and_the_plan_respects_risk_and_reward():
-    aave, btc = market()
+    aave, btc = market(ask_size=400.0)  # deep book: the $25 risk budget is what limits size
     plan, reasons = entry_blockers(aave, btc, SATURDAY_NOON, ACCOUNT)
     assert reasons == []
     assert plan.stop < 99.0 < plan.entry  # just under the 15-min low
@@ -93,3 +95,18 @@ def test_btc_crash_forces_risk_off_and_jev_thresholds():
     assert jev_blockers({**ok, "demand_accepted": 0.79})  # the user's 0.8 rule
     assert jev_blockers({**ok, "absorption": 0.3})
     assert jev_blockers({**ok, "btc_sell_pressure": 0.5})
+
+
+def test_thin_book_caps_size_and_entry_pays_for_walking_the_offers():
+    aave, btc = market(ask_size=5.0)  # 10 levels x 5 AAVE ~ $5,000 of offers
+    plan, reasons = entry_blockers(aave, btc, SATURDAY_NOON, ACCOUNT)
+    assert reasons == []
+    visible = sum(px * sz for px, sz in aave.asks)
+    assert plan.quantity * aave.ask <= gates.MAX_BOOK_SHARE * visible + 1e-6
+    assert plan.planned_loss < 25.0  # smaller than the budget: the book is the limit
+    assert plan.entry > aave.ask  # average price through several levels, not the best ask
+
+
+def test_too_thin_book_is_no_trade():
+    aave, btc = market(ask_size=0.1)  # ~$100 of offers in total
+    assert any("too thin" in r for r in entry_blockers(aave, btc, SATURDAY_NOON, ACCOUNT)[1])

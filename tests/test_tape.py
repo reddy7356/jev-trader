@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from jev_trader.gatekeeper.tape import Tape, merged_records
+from jev_trader.gatekeeper.tape import Tape, fill_price, merged_records
 
 
 def book(tape: Tape, ts: float, mid: float, bid_size: float = 10.0, ask_size: float = 10.0):
@@ -69,3 +69,10 @@ def test_timeline_shows_each_30s_step_of_price_flow_and_book():
     assert steps[1]["sold_usd_k"] == 3.0  # the sell in the 30-60 s step
     assert steps[2]["best_ask_usd_k"] == 4.0  # 40 AAVE x ~$100 at the best ask
     assert steps[2]["bid_depth_usd_k"] == 5.0
+
+
+def test_fill_price_walks_the_book():
+    asks = [[100.0, 1.0], [101.0, 1.0], [102.0, 10.0]]
+    assert fill_price(asks, 0.5) == 100.0
+    assert fill_price(asks, 2.0) == pytest.approx(100.5)
+    assert fill_price(asks, 4.0) == pytest.approx((100 + 101 + 2 * 102) / 4)

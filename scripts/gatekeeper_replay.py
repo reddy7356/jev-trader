@@ -108,7 +108,7 @@ async def replay(paths: dict[str, Path], judge: CachedJev | None) -> dict:
             position = Position.open(plan, now, aave)
             last_monitor = now
     if position is not None:  # end of data: close at the last bid, like a time stop
-        position.close(aave.ts, "end of data", aave.bid)
+        position.close(aave.ts, "end of data", aave)
         realized[day(aave.ts)] = realized.get(day(aave.ts), 0.0) + position.pnl
         trades.append(trade_row(position))
     return {
