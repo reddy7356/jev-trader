@@ -66,10 +66,11 @@ def btc_risk_off(btc: Tape, now: float) -> list[str]:
     if stale(btc, now):
         return ["BTC data stale"]
     c5, c15, c60, share = btc.change(5), btc.change(15), btc.change(60), btc.buy_share(5)
-    if None in (c5, c15, c60, share):
+    if None in (c5, c15, c60):
         return ["BTC history incomplete (needs 60 min)"]
     reasons = []
-    if c15 < BTC_DROP_15M and share < SELLING_SHARE and c5 < 0:
+    selling = share is not None and share < SELLING_SHARE  # no trades = no selling pressure
+    if c15 < BTC_DROP_15M and selling and c5 < 0:
         reasons.append(f"BTC {c15:+.2%} in 15 min with accelerating selling")
     if c60 < BTC_DROP_60M:
         reasons.append(f"BTC {c60:+.2%} in 60 min")
