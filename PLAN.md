@@ -217,17 +217,22 @@ Not in scope yet: news and whale feeds (no reliable automated verification); mar
 warnings and a hand-kept US event calendar (8:15–10:30 ET daily, CPI/jobs/ISM/FOMC) stand in.
 
 - [ ] Record AAVE + BTC together for 3 days (`data/rec_AAVE_3d.jsonl`, `data/rec_BTC_3d.jsonl`)
-      — running since Thu 2026-10-01 ~1 PM ET, ends ~Sun 1 PM ET
+      — running since Thu 2026-10-01 4:55 PM ET, ends ~Sun 4:55 PM ET
 - [x] Two-coin feed (AAVE + BTC in one clock) and features: 5/15/60-min changes,
       5-min volume vs prior-12 median, book history (30 s snapshots, 5 min)
       — `gatekeeper/tape.py`: `Tape` per coin (missing history = None = NO TRADE) and
         `merged_records` streaming recordings in time order. Live two-coin feed: later
-- [ ] US event calendar (fixed daily window + dated releases)
-- [ ] BTC risk filter (code + Jev)
-- [ ] AAVE entry gatekeeper (code + Jev), stop/target proposal
-- [ ] Long-only paper simulator: entry, stop, T1 partial + stop to entry, T2, time stop
-- [ ] Position monitor (code + Jev)
+- [x] US event calendar (fixed daily window + dated releases)
+      — `gatekeeper/calendar.py`: weekdays 8:15-10:30 ET, FOMC days 13:30-15:30 ET, 30 min lead
+- [x] BTC risk filter (code + Jev) — `gates.btc_risk_off` + Jev `btc_sell_pressure` <= 0.3
+- [x] AAVE entry gatekeeper (code + Jev), stop/target proposal
+      — `gates.entry_blockers` / `plan_trade`; Jev `demand_accepted` >= 0.8, `absorption` <= 0.2.
+        Stop 5 bps under the 15-min low, risk 0.25% of equity, T1/T2 = 1.5R/3R after fees
+- [x] Long-only paper simulator: entry, stop, T1 partial + stop to entry, T2, time stop
+- [x] Position monitor (code + Jev) — `gatekeeper/position.py`; Jev `thesis_failed` >= 0.8 exits
 - [ ] Replay the 3-day recording: how often it trades, net of fees, per-trade R
+      — `scripts/gatekeeper_replay.py` (code only vs code + Jev, Jev answers cached);
+        waiting for the recording
 - [ ] Live paper sessions only if the replay beats fees
 
 **Acceptance:** on replay and then live paper, losing trades stay at <= 1R, most sessions

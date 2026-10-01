@@ -54,6 +54,10 @@ class Position:
         self.quantity -= quantity
         self.exits.append((ts, reason, price, quantity))
 
+    def close(self, ts: float, reason: str, bid: float) -> None:
+        """Sell everything left at the bid (market order, taker fee)."""
+        self._sell(ts, reason, bid, self.quantity, TAKER_FEE)
+
     def check(
         self, aave: Tape, btc: Tape, now: float, thesis_failed: float | None = None
     ) -> str | None:
@@ -71,7 +75,7 @@ class Position:
         elif not self.t1_done and now - self.opened >= TIME_STOP_S:
             exit_all = "time stop: no T1 within 60 min"
         if exit_all:
-            self._sell(now, exit_all, bid, self.quantity, TAKER_FEE)
+            self.close(now, exit_all, bid)
             return exit_all
         if not self.t1_done and bid >= plan.target1:
             self._sell(now, "T1: sold 50%", plan.target1, self.quantity / 2, MAKER_FEE)
