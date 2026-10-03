@@ -72,3 +72,25 @@ def test_time_stop_jev_thesis_and_btc_risk_off():
     aave, btc = tapes(btc_drop=-0.04)
     pos = Position.open(PLAN, T0, aave)
     assert pos.check(aave, btc, T0).startswith("BTC risk-off")
+
+
+def test_bid_collapse_exit_needs_a_lasting_collapse_and_heavy_selling():
+    _, btc = tapes()
+    aave = Tape("AAVE")
+    for k in range(11):  # the 5 minutes before entry: bids around $5,000
+        aave.on_book(T0 - 300 + 30 * k, [[99.99, 50.0]], [[100.0, 50.0]])
+    pos = Position.open(PLAN, T0, aave)
+    assert pos.entry_bid_depth == pytest.approx(99.99 * 50)
+
+    def snap(ts, bid_size, sold):
+        aave.on_book(ts, [[99.99, bid_size]], [[100.0, 50.0]])
+        btc.on_book(ts, [[79_999.0, 1.0]], [[80_001.0, 1.0]])
+        aave.on_trade(ts, 99.99, sold, "sell")
+
+    snap(T0 + 30, 10.0, 5.0)  # one thin snapshot with selling: not yet
+    assert pos.check(aave, btc, T0 + 30) is None
+    snap(T0 + 60, 50.0, 5.0)  # bids come back: the streak resets
+    assert pos.check(aave, btc, T0 + 60) is None
+    snap(T0 + 90, 10.0, 5.0)
+    snap(T0 + 120, 10.0, 5.0)  # two thin snapshots in a row + sellers dominate
+    assert pos.check(aave, btc, T0 + 120) == "AAVE bids collapsed and sellers dominate"

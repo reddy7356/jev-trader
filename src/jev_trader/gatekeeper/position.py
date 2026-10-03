@@ -8,6 +8,7 @@ The stop only ever moves up. Never averages down.
 
 from __future__ import annotations
 
+import statistics
 from dataclasses import dataclass, field
 
 from jev_trader.gatekeeper.gates import MAKER_FEE, TAKER_FEE, TradePlan, btc_risk_off
@@ -15,8 +16,15 @@ from jev_trader.gatekeeper.tape import Tape, fill_price
 
 TIME_STOP_S = 3600.0
 THESIS_FAILED_MIN = 0.8  # Jev probability that the entry thesis failed
-BID_COLLAPSE = 0.5  # bid depth below half of what it was at entry ...
-SELLERS_DOMINATE = 0.25  # ... while aggressive buyers are under 25% of the last minute
+# "bids collapse and sellers dominate": the last COLLAPSE_SNAPSHOTS 30 s snapshots all
+# show bid depth under BID_COLLAPSE x the typical (median) depth of the 5 minutes before
+# entry, while aggressive buyers are under SELLERS_DOMINATE of the last SELLING_MIN minutes.
+# (Comparing to the entry moment itself, when bids were unusually strong, exited 10 of 11
+# replay trades on ordinary noise within minutes.)
+BID_COLLAPSE = 0.5
+COLLAPSE_SNAPSHOTS = 2
+SELLERS_DOMINATE = 0.25
+SELLING_MIN = 2.0
 
 
 @dataclass
@@ -32,7 +40,8 @@ class Position:
 
     @classmethod
     def open(cls, plan: TradePlan, ts: float, aave: Tape) -> Position:
-        depth = aave.snapshots[-1].bid_depth if aave.snapshots else 0.0
+        before = [s.bid_depth for s in aave.snapshots if s.ts >= ts - 300.0]
+        depth = statistics.median(before) if before else 0.0
         position = cls(plan, ts, depth, plan.quantity, plan.stop)
         position.cash = -plan.entry * plan.quantity * (1 + TAKER_FEE)
         return position
@@ -89,8 +98,9 @@ class Position:
         return None
 
     def _liquidity_collapsed(self, aave: Tape) -> bool:
-        if not aave.snapshots or self.entry_bid_depth <= 0:
+        recent = [s for s in aave.snapshots if s.ts > self.opened][-COLLAPSE_SNAPSHOTS:]
+        if len(recent) < COLLAPSE_SNAPSHOTS or self.entry_bid_depth <= 0:
             return False
-        share = aave.buy_share(1)
-        thin = aave.snapshots[-1].bid_depth < BID_COLLAPSE * self.entry_bid_depth
+        thin = all(s.bid_depth < BID_COLLAPSE * self.entry_bid_depth for s in recent)
+        share = aave.buy_share(SELLING_MIN)
         return thin and share is not None and share < SELLERS_DOMINATE
