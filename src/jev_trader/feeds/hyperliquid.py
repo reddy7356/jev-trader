@@ -63,7 +63,9 @@ async def stream(
             async with contextlib.aclosing(_stream_once(coin, url, levels)) as records:
                 async for rec in records:
                     yield rec
-        except (websockets.ConnectionClosed, OSError) as exc:
+        # any websocket failure, incl. the server refusing to connect (HTTP 502 during an
+        # outage, seen 2026-10-03): wait and reconnect rather than stop recording
+        except (websockets.exceptions.WebSocketException, OSError) as exc:
             print(f"connection lost ({exc!r}); reconnecting")
             await asyncio.sleep(2.0)
 

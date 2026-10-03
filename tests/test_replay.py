@@ -63,3 +63,27 @@ async def test_replay_groups_trades_into_the_following_block(tmp_path):
     assert events[1].book.best_bid.price == 100.01
 
     assert len([e async for e in ReplayFeed(path, max_blocks=2).events()]) == 2
+
+
+async def test_live_stream_reconnects_after_the_server_refuses(monkeypatch):
+    import websockets.exceptions
+
+    from jev_trader.feeds import hyperliquid
+
+    attempts = []
+
+    async def flaky(coin, url, levels):
+        attempts.append(1)
+        if len(attempts) == 1:  # first connection: the server answers HTTP 502
+            raise websockets.exceptions.InvalidStatus(type("R", (), {"status_code": 502})())
+        yield {"kind": "book", "ts": 1.0}
+
+    async def no_sleep(_):
+        return None
+
+    monkeypatch.setattr(hyperliquid, "_stream_once", flaky)
+    monkeypatch.setattr(hyperliquid.asyncio, "sleep", no_sleep)
+    stream = hyperliquid.stream("AAVE")
+    assert (await anext(stream))["kind"] == "book"
+    assert len(attempts) == 2
+    await stream.aclose()
