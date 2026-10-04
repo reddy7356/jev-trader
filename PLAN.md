@@ -230,9 +230,13 @@ warnings and a hand-kept US event calendar (8:15–10:30 ET daily, CPI/jobs/ISM/
         Stop 5 bps under the 15-min low, risk 0.25% of equity, T1/T2 = 1.5R/3R after fees
 - [x] Long-only paper simulator: entry, stop, T1 partial + stop to entry, T2, time stop
 - [x] Position monitor (code + Jev) — `gatekeeper/position.py`; Jev `thesis_failed` >= 0.8 exits
-- [ ] Replay the 3-day recording: how often it trades, net of fees, per-trade R
-      — `scripts/gatekeeper_replay.py` (code only vs code + Jev, Jev answers cached);
-        waiting for the recording
+- [x] Replay the 3-day recording: how often it trades, net of fees, per-trade R
+      — 72 h (Thu 10-01 16:55 to Sun 10-04 16:54 ET). FAST code only: 15 trades, 2 wins,
+        -$53.63 (12/15 ended by "bids collapsed"); FAST + Jev at 0.8: 0 trades (Jev's
+        demand 0.39-0.82; the 4 trades it rated >= 0.8 all lost). SLOW code only: 3 trades,
+        +$29.39 (too few to judge); SLOW + Jev: 0 trades. Keep the 0.8 rule for now
+- [ ] SLOW style (hours-scale clock, same rules) — built; judge it on the 2-week recording
+- [ ] 2-week AAVE + BTC recording (`data/rec2w/`, daily files) — Sun 10-04 to Sun 10-18
 - [ ] Live paper sessions only if the replay beats fees
 
 **Acceptance:** on replay and then live paper, losing trades stay at <= 1R, most sessions
