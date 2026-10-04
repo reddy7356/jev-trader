@@ -17,7 +17,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-HISTORY_S = 2 * 3600.0
+HISTORY_S = 4 * 3600.0  # SLOW style: 13 x 15-min volume periods = 3.25 h
 SNAPSHOT_EVERY_S = 30.0
 DEPTH_LEVELS = 10  # the recorder keeps 10; AAVE's top 5 alone flip on noise
 
@@ -109,13 +109,19 @@ class Tape:
         total = sum(usd for usd, _ in recent)
         return sum(usd for usd, buy in recent if buy) / total if total > 0 else None
 
-    def timeline(self, slices: int = 10) -> list[dict[str, float]]:
-        """The last `slices` 30 s steps, oldest first: what price, flow and book did.
+    def timeline(self, slices: int = 10, step_s: float = 30.0) -> list[dict[str, float]]:
+        """The last `slices` steps of `step_s`, oldest first: what price, flow and book did.
 
-        Lets a judge see relationships a 5-min total hides, e.g. heavy buying while
+        Lets a judge see relationships a window total hides, e.g. heavy buying while
         price stays flat (absorption) versus buying that lifts price (acceptance).
         """
-        snaps = list(self.snapshots)[-(slices + 1) :]
+        snaps: list[Snapshot] = []
+        for snap in reversed(self.snapshots):  # newest first, one per step
+            if not snaps or snaps[-1].ts - snap.ts >= step_s - 1e-6:
+                snaps.append(snap)
+                if len(snaps) == slices + 1:
+                    break
+        snaps.reverse()
         steps = []
         for before, after in itertools.pairwise(snaps):
             trades = [(usd, buy) for ts, usd, buy in self._trades if before.ts <= ts < after.ts]
@@ -132,12 +138,12 @@ class Tape:
             )
         return steps
 
-    def bids_stronger_for(self, seconds: float) -> bool | None:
-        """True if every 30 s snapshot in the last `seconds` had more bid than ask depth."""
+    def bids_stronger_share(self, seconds: float) -> float | None:
+        """Share of the 30 s snapshots in the last `seconds` with more bid than ask depth."""
         if not self._covers(seconds):
             return None
         recent = [s for s in self.snapshots if s.ts >= self.ts - seconds]
-        return bool(recent) and all(s.bid_depth > s.ask_depth for s in recent)
+        return sum(s.bid_depth > s.ask_depth for s in recent) / len(recent) if recent else None
 
 
 def fill_price(levels: list, quantity: float) -> float:

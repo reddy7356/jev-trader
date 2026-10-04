@@ -11,10 +11,16 @@ from __future__ import annotations
 import statistics
 from dataclasses import dataclass, field
 
-from jev_trader.gatekeeper.gates import MAKER_FEE, TAKER_FEE, TradePlan, btc_risk_off
+from jev_trader.gatekeeper.gates import (
+    FAST,
+    MAKER_FEE,
+    TAKER_FEE,
+    Style,
+    TradePlan,
+    btc_risk_off,
+)
 from jev_trader.gatekeeper.tape import Tape, fill_price
 
-TIME_STOP_S = 3600.0
 THESIS_FAILED_MIN = 0.8  # Jev probability that the entry thesis failed
 # "bids collapse and sellers dominate": the last COLLAPSE_SNAPSHOTS 30 s snapshots all
 # show bid depth under BID_COLLAPSE x the typical (median) depth of the 5 minutes before
@@ -32,6 +38,7 @@ class Position:
     plan: TradePlan
     opened: float
     entry_bid_depth: float
+    style: Style = FAST
     quantity: float = 0.0
     stop: float = 0.0
     t1_done: bool = False
@@ -39,10 +46,10 @@ class Position:
     exits: list[tuple[float, str, float, float]] = field(default_factory=list)
 
     @classmethod
-    def open(cls, plan: TradePlan, ts: float, aave: Tape) -> Position:
+    def open(cls, plan: TradePlan, ts: float, aave: Tape, style: Style = FAST) -> Position:
         before = [s.bid_depth for s in aave.snapshots if s.ts >= ts - 300.0]
         depth = statistics.median(before) if before else 0.0
-        position = cls(plan, ts, depth, plan.quantity, plan.stop)
+        position = cls(plan, ts, depth, style, plan.quantity, plan.stop)
         position.cash = -plan.entry * plan.quantity * (1 + TAKER_FEE)
         return position
 
@@ -80,10 +87,10 @@ class Position:
             exit_all = f"BTC risk-off: {'; '.join(risk)}"
         elif thesis_failed is not None and thesis_failed >= THESIS_FAILED_MIN:
             exit_all = f"Jev: entry thesis failed p={thesis_failed:.2f}"
-        elif self._liquidity_collapsed(aave):
+        elif self.style.collapse_exit and self._liquidity_collapsed(aave):
             exit_all = "AAVE bids collapsed and sellers dominate"
-        elif not self.t1_done and now - self.opened >= TIME_STOP_S:
-            exit_all = "time stop: no T1 within 60 min"
+        elif not self.t1_done and now - self.opened >= self.style.time_stop_s:
+            exit_all = f"time stop: no T1 within {self.style.time_stop_s / 60:.0f} min"
         if exit_all:
             self.close(now, exit_all, aave)
             return exit_all

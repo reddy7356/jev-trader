@@ -94,3 +94,19 @@ def test_bid_collapse_exit_needs_a_lasting_collapse_and_heavy_selling():
     snap(T0 + 90, 10.0, 5.0)
     snap(T0 + 120, 10.0, 5.0)  # two thin snapshots in a row + sellers dominate
     assert pos.check(aave, btc, T0 + 120) == "AAVE bids collapsed and sellers dominate"
+
+
+def test_slow_style_ignores_bid_collapse_and_waits_four_hours():
+    from jev_trader.gatekeeper.gates import SLOW
+
+    aave, btc = tapes()
+    pos = Position.open(PLAN, T0, aave, SLOW)
+    for k in range(1, 4):  # bids vanish and sellers dominate: FAST would exit, SLOW holds
+        aave.on_book(T0 + 30 * k, [[99.99, 1.0]], [[100.0, 50.0]])
+        aave.on_trade(T0 + 30 * k, 99.99, 50.0, "sell")
+        btc.on_book(T0 + 30 * k, [[79_999.0, 1.0]], [[80_001.0, 1.0]])
+        assert pos.check(aave, btc, T0 + 30 * k) is None
+    move(aave, btc, T0 + 3600, 100.1)
+    assert pos.check(aave, btc, T0 + 3600) is None  # FAST's 60-min time stop does not apply
+    move(aave, btc, T0 + 4 * 3600, 100.1)
+    assert pos.check(aave, btc, T0 + 4 * 3600).startswith("time stop: no T1 within 240 min")

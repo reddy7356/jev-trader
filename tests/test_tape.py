@@ -17,7 +17,7 @@ def test_missing_history_means_none():
     book(tape, 60.0, 101.0)
     assert tape.change(5) is None  # only 1 minute of history
     assert tape.volume_ratio() is None
-    assert tape.bids_stronger_for(180) is None
+    assert tape.bids_stronger_share(180) is None
     assert tape.change(1) == pytest.approx(0.01)
 
 
@@ -41,8 +41,8 @@ def test_bids_stronger_for_three_minutes():
     tape = Tape("AAVE")
     for k in range(10):  # snapshots every 30 s; bids stronger only in the last 3 minutes
         book(tape, k * 30.0, 100.0, bid_size=20.0 if k >= 4 else 5.0)
-    assert tape.bids_stronger_for(150) is True
-    assert tape.bids_stronger_for(240) is False
+    assert tape.bids_stronger_share(150) == 1.0
+    assert tape.bids_stronger_share(240) < 1.0
 
 
 def test_merged_records_interleave_coins_in_time_order(tmp_path):
@@ -76,3 +76,14 @@ def test_fill_price_walks_the_book():
     assert fill_price(asks, 0.5) == 100.0
     assert fill_price(asks, 2.0) == pytest.approx(100.5)
     assert fill_price(asks, 4.0) == pytest.approx((100 + 101 + 2 * 102) / 4)
+
+
+def test_timeline_with_longer_steps_skips_in_between_snapshots():
+    tape = Tape("AAVE")
+    for k in range(9):  # snapshots every 30 s, price +1 bp each
+        tape.on_book(
+            k * 30.0, [[100.0 * (1 + k / 1e4) - 0.005, 1.0]], [[100.0 * (1 + k / 1e4) + 0.005, 1.0]]
+        )
+    steps = tape.timeline(slices=4, step_s=60.0)
+    assert len(steps) == 4
+    assert all(s["mid_change_bps"] == pytest.approx(2.0, abs=0.02) for s in steps)  # 2 snaps/step

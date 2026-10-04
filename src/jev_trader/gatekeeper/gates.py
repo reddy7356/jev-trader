@@ -1,8 +1,12 @@
 """Phase 7 gates: the user's rules as code. Jev only adds judgment on top.
 
-Flow every 30 s while flat: `entry_blockers` (code) -> if none, ask Jev -> `jev_blockers`
--> if none, LONG ELIGIBLE with the `TradePlan`. The default is NO TRADE: any missing
-or stale input blocks. `btc_risk_off` is shared with the position monitor (forced exit).
+The same rules run on two clocks (`Style`): FAST, the original minutes-scale version,
+and SLOW, an hours-scale version where fees and slippage are a small share of the move.
+
+Flow every `decide_every_s` while flat: `entry_blockers` (code) -> if none, ask Jev
+-> `jev_blockers` -> if none, LONG ELIGIBLE with the `TradePlan`. The default is
+NO TRADE: any missing or stale input blocks. `btc_risk_off` is shared with the
+position monitor (forced exit).
 """
 
 from __future__ import annotations
@@ -21,13 +25,11 @@ SELLING_SHARE = 0.45  # aggressive buy share below this, with price falling = ac
 # AAVE (prompt 1)
 MAX_SPREAD_PCT = 0.35
 MIN_VOLUME_RATIO = 1.5
-BIDS_STRONGER_S = 180.0
 MIN_BUY_SHARE = 0.55
 # risk and plan
 RISK_PCT = 0.0025  # max loss per trade, share of equity
 DAILY_LOSS_USD = 100.0
-STOP_BUFFER = 0.0005  # stop 5 bps under the 15-min low
-MIN_RISK_PCT, MAX_RISK_PCT = 0.0025, 0.02  # closer stops are noise; farther are too slow
+STOP_BUFFER = 0.0005  # stop 5 bps under the recent low
 TAKER_FEE, MAKER_FEE = 0.00045, 0.00015
 MIN_REWARD_TO_RISK = 1.5
 MAX_BOOK_SHARE = 0.5  # buy at most half of the offers visible in DEPTH_LEVELS levels
@@ -36,6 +38,29 @@ MIN_TRADE_USD = 100.0  # below this the visible book is too thin to bother
 DEMAND_ACCEPTED_MIN = 0.8
 ABSORPTION_MAX = 0.2
 BTC_SELL_PRESSURE_MAX = 0.3
+
+
+@dataclass(frozen=True, slots=True)
+class Style:
+    """The clock a strategy runs on: same rules, different time windows."""
+
+    name: str
+    decide_every_s: float  # entry checks while flat; Jev monitor questions while in a trade
+    flow_min: float  # window for volume vs median, aggressive buying, price acceptance
+    trend_min: float | None  # also require price above this many minutes ago (None = off)
+    bids_stronger_s: float  # look-back for "bids stronger than asks" ...
+    bids_stronger_share: float  # ... in at least this share of 30 s snapshots (1.0 = all)
+    low_min: float  # stop goes under the low of this window
+    min_risk_pct: float  # stops closer than this are noise
+    max_risk_pct: float  # farther than this are too slow
+    time_stop_s: float  # exit if T1 not reached in time
+    collapse_exit: bool  # exit when bids collapse and sellers dominate
+    timeline_step_s: float  # Jev's timeline: step length ...
+    timeline_slices: int  # ... and number of steps
+
+
+FAST = Style("fast", 30, 5, None, 180, 1.0, 15, 0.0025, 0.02, 3600, True, 30, 10)
+SLOW = Style("slow", 300, 15, 60, 900, 0.7, 60, 0.005, 0.04, 4 * 3600, False, 300, 12)
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,15 +104,17 @@ def btc_risk_off(btc: Tape, now: float) -> list[str]:
     return reasons
 
 
-def plan_trade(aave: Tape, account: Account) -> tuple[TradePlan | None, list[str]]:
-    """Market buy walking the offers, stop under the 15-min low, targets 1.5R / 3R net of fees.
+def plan_trade(
+    aave: Tape, account: Account, style: Style = FAST
+) -> tuple[TradePlan | None, list[str]]:
+    """Market buy walking the offers, stop under the recent low, targets 1.5R / 3R net of fees.
 
     Size is capped at half the visible offers, and the entry price is the average the
     buy would really pay through those levels (slippage), not just the best ask.
     """
-    low = aave.low(15)
+    low = aave.low(style.low_min)
     if low is None:
-        return None, ["AAVE 15-min low unavailable"]
+        return None, [f"AAVE {style.low_min:.0f}-min low unavailable"]
     stop = low * (1 - STOP_BUFFER)
     visible = sum(px * sz for px, sz in aave.asks[:DEPTH_LEVELS])
     first_risk = aave.ask - stop + aave.ask * 2 * TAKER_FEE
@@ -97,8 +124,8 @@ def plan_trade(aave: Tape, account: Account) -> tuple[TradePlan | None, list[str
         return None, [f"AAVE book too thin (${visible:,.0f} of offers in {DEPTH_LEVELS} levels)"]
     entry = fill_price(aave.asks, size)
     risk = entry - stop
-    if not MIN_RISK_PCT <= risk / entry <= MAX_RISK_PCT:
-        allowed = f"{MIN_RISK_PCT:.2%}-{MAX_RISK_PCT:.0%}"
+    if not style.min_risk_pct <= risk / entry <= style.max_risk_pct:
+        allowed = f"{style.min_risk_pct:.2%}-{style.max_risk_pct:.0%}"
         return None, [f"stop {risk / entry:.2%} below entry (allowed {allowed})"]
     # net of fees: losing costs entry + stop fees, winning pays entry + target fees
     risk_net = risk + entry * 2 * TAKER_FEE
@@ -117,7 +144,7 @@ def plan_trade(aave: Tape, account: Account) -> tuple[TradePlan | None, list[str
 
 
 def entry_blockers(
-    aave: Tape, btc: Tape, now: float, account: Account
+    aave: Tape, btc: Tape, now: float, account: Account, style: Style = FAST
 ) -> tuple[TradePlan | None, list[str]]:
     """All code rules for a new long. Returns (plan, []) only when every rule passes."""
     reasons = btc_risk_off(btc, now)
@@ -129,19 +156,27 @@ def entry_blockers(
         return None, [*reasons, "AAVE data stale"]
     if aave.spread_pct > MAX_SPREAD_PCT:
         reasons.append(f"AAVE spread {aave.spread_pct:.3f}% > {MAX_SPREAD_PCT}%")
-    ratio = aave.volume_ratio()
+    flow = style.flow_min
+    ratio = aave.volume_ratio(period_s=flow * 60)
     if ratio is None or ratio < MIN_VOLUME_RATIO:
-        reasons.append(f"AAVE 5-min volume {ratio or 0:.2f}x median, needs {MIN_VOLUME_RATIO}x")
-    if not aave.bids_stronger_for(BIDS_STRONGER_S):
-        reasons.append(f"AAVE bids not stronger than asks for {BIDS_STRONGER_S / 60:.0f} min")
-    share, c5 = aave.buy_share(5), aave.change(5)
+        reasons.append(
+            f"AAVE {flow:.0f}-min volume {ratio or 0:.2f}x median, needs {MIN_VOLUME_RATIO}x"
+        )
+    strength = aave.bids_stronger_share(style.bids_stronger_s)
+    if strength is None or strength < style.bids_stronger_share:
+        reasons.append(
+            f"AAVE bids not stronger than asks for {style.bids_stronger_s / 60:.0f} min"
+        )
+    share, accepting = aave.buy_share(flow), aave.change(flow)
     if share is None or share < MIN_BUY_SHARE:
         reasons.append(f"AAVE aggressive buying {share or 0:.0%} < {MIN_BUY_SHARE:.0%}")
-    if c5 is None or c5 <= 0:
-        reasons.append("AAVE price not accepting higher (5-min change <= 0)")
+    if accepting is None or accepting <= 0:
+        reasons.append(f"AAVE price not accepting higher ({flow:.0f}-min change <= 0)")
+    if style.trend_min and ((trend := aave.change(style.trend_min)) is None or trend <= 0):
+        reasons.append(f"AAVE not in an uptrend ({style.trend_min:.0f}-min change <= 0)")
     if reasons:
         return None, reasons
-    return plan_trade(aave, account)
+    return plan_trade(aave, account, style)
 
 
 def jev_blockers(judgments: dict[str, float]) -> list[str]:

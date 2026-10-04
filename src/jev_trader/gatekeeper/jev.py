@@ -11,7 +11,7 @@ from typing import Any
 
 from typesafe_sdk import Noul
 
-from jev_trader.gatekeeper.gates import TradePlan
+from jev_trader.gatekeeper.gates import FAST, Style, TradePlan
 from jev_trader.gatekeeper.tape import Tape
 
 BTC_SELL_PRESSURE = Noul(
@@ -59,27 +59,33 @@ def _pct(value: float | None) -> float | None:
     return None if value is None else round(value * 100, 3)
 
 
-def tape_state(tape: Tape) -> dict[str, Any]:
-    """Compact numbers for Jev: % changes, flow, and a 5-minute timeline in 30 s steps."""
+def tape_state(tape: Tape, style: Style = FAST) -> dict[str, Any]:
+    """Compact numbers for Jev: % changes, flow, and a timeline in the style's steps."""
     return {
         "mid": round(tape.mid, 6),
         "change_pct": {f"{m}m": _pct(tape.change(m)) for m in (1, 5, 15, 60)},
         "spread_pct": round(tape.spread_pct, 4),
-        "volume_vs_median_5m": None if (r := tape.volume_ratio()) is None else round(r, 2),
+        "volume_vs_median": None
+        if (r := tape.volume_ratio(period_s=style.flow_min * 60)) is None
+        else round(r, 2),
+        "volume_window_min": style.flow_min,
         "aggressive_buy_share": {
             f"{m}m": None if (s := tape.buy_share(m)) is None else round(s, 2) for m in (1, 5)
         },
-        "timeline_30s_oldest_first": tape.timeline(10),
+        "timeline_step_s": style.timeline_step_s,
+        "timeline_oldest_first": tape.timeline(style.timeline_slices, style.timeline_step_s),
     }
 
 
-def entry_state(aave: Tape, btc: Tape) -> dict[str, Any]:
-    return {"aave": tape_state(aave), "btc": tape_state(btc)}
+def entry_state(aave: Tape, btc: Tape, style: Style = FAST) -> dict[str, Any]:
+    return {"aave": tape_state(aave, style), "btc": tape_state(btc, style)}
 
 
-def monitor_state(aave: Tape, btc: Tape, plan: TradePlan, opened: float) -> dict[str, Any]:
+def monitor_state(
+    aave: Tape, btc: Tape, plan: TradePlan, opened: float, style: Style = FAST
+) -> dict[str, Any]:
     return {
-        **entry_state(aave, btc),
+        **entry_state(aave, btc, style),
         "position": {
             "side": "long",
             "entry": plan.entry,

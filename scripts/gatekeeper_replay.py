@@ -2,9 +2,9 @@
 
     uv run python scripts/gatekeeper_replay.py data/rec_AAVE_3d.jsonl data/rec_BTC_3d.jsonl
 
-Runs twice on the same data, code rules only and then code + Jev, and writes
-docs/gatekeeper_replay.md. Jev answers are cached in data/cache_gate_jev.jsonl
-(keyed by question set and time), so re-running costs nothing.
+Runs both clocks (FAST: minutes, SLOW: hours), each as code rules only and as code +
+Jev, on the same data, and writes docs/gatekeeper_replay.md. Jev answers are cached in
+data/cache_gate_jev.jsonl (keyed by question set and time), so re-running costs nothing.
 """
 
 from __future__ import annotations
@@ -22,9 +22,9 @@ from typesafe_sdk import AsyncTypeSafeClient
 from jev_trader.config import Settings
 from jev_trader.gatekeeper import jev
 from jev_trader.gatekeeper.calendar import ET
-from jev_trader.gatekeeper.gates import Account, entry_blockers, jev_blockers
+from jev_trader.gatekeeper.gates import FAST, SLOW, Account, Style, entry_blockers, jev_blockers
 from jev_trader.gatekeeper.position import Position
-from jev_trader.gatekeeper.tape import SNAPSHOT_EVERY_S, Tape, merged_records
+from jev_trader.gatekeeper.tape import Tape, merged_records
 
 STARTING_EQUITY = 10_000.0
 CACHE = Path("data/cache_gate_jev.jsonl")
@@ -54,7 +54,7 @@ class CachedJev:
         return self.cache[key]
 
 
-async def replay(paths: dict[str, Path], judge: CachedJev | None) -> dict:
+async def replay(paths: dict[str, Path], judge: CachedJev | None, style: Style = FAST) -> dict:
     tapes = {coin: Tape(coin) for coin in paths}
     aave, btc = tapes["AAVE"], tapes["BTC"]
     realized: dict[str, float] = {}  # ET date -> $ realized
@@ -63,6 +63,8 @@ async def replay(paths: dict[str, Path], judge: CachedJev | None) -> dict:
     checks = jev_rejections = 0
     position: Position | None = None
     last_check = last_monitor = 0.0
+
+    prefix = "" if style is FAST else f"{style.name}-"  # FAST keeps the original cache keys
 
     def day(ts: float) -> str:
         return datetime.fromtimestamp(ts, ET).date().isoformat()
@@ -78,34 +80,34 @@ async def replay(paths: dict[str, Path], judge: CachedJev | None) -> dict:
         now = rec["ts"]
         if position is not None:
             thesis = None
-            if judge and now - last_monitor >= SNAPSHOT_EVERY_S:
+            if judge and now - last_monitor >= style.decide_every_s:
                 last_monitor = now
-                state = jev.monitor_state(aave, btc, position.plan, position.opened)
-                thesis = (await judge.ask("monitor", now, state, jev.MONITOR_QUESTIONS))[
-                    "thesis_failed"
-                ]
+                state = jev.monitor_state(aave, btc, position.plan, position.opened, style)
+                answers = await judge.ask(f"{prefix}monitor", now, state, jev.MONITOR_QUESTIONS)
+                thesis = answers["thesis_failed"]
             position.check(aave, btc, now, thesis)
             if position.closed:
                 realized[day(now)] = realized.get(day(now), 0.0) + position.pnl
                 trades.append(trade_row(position))
                 position = None
             continue
-        if now - last_check < SNAPSHOT_EVERY_S:
+        if now - last_check < style.decide_every_s:
             continue
         last_check = now
         checks += 1
         equity = STARTING_EQUITY + sum(realized.values())
         plan, reasons = entry_blockers(
-            aave, btc, now, Account(equity, realized.get(day(now), 0.0))
+            aave, btc, now, Account(equity, realized.get(day(now), 0.0)), style
         )
         if judge and not reasons:
-            answers = await judge.ask("entry", now, jev.entry_state(aave, btc), jev.ENTRY_QUESTIONS)
+            state = jev.entry_state(aave, btc, style)
+            answers = await judge.ask(f"{prefix}entry", now, state, jev.ENTRY_QUESTIONS)
             if reasons := jev_blockers(answers):
                 jev_rejections += 1
         for reason in set(reasons):  # count each rule once, ignoring its numbers
             blocked[re.sub(r"[-+]?\d[\d.,]*%?x?", "#", reason.split(" (")[0])] += 1
         if not reasons:
-            position = Position.open(plan, now, aave)
+            position = Position.open(plan, now, aave, style)
             last_monitor = now
     if position is not None:  # end of data: close at the last bid, like a time stop
         position.close(aave.ts, "end of data", aave)
@@ -140,7 +142,7 @@ def section(name: str, result: dict) -> list[str]:
     lines = [
         f"## {name}",
         "",
-        f"- Entry checks (every 30 s while flat): {result['checks']:,}",
+        f"- Entry checks while flat: {result['checks']:,}",
         f"- Trades: {len(trades)} ({len(wins)} wins, {len(trades) - len(wins)} losses)",
         f"- Net result after fees: **{total:+.2f}** on ${STARTING_EQUITY:,.0f}",
     ]
@@ -171,13 +173,17 @@ def section(name: str, result: dict) -> list[str]:
 
 async def main() -> None:
     paths = {"AAVE": Path(sys.argv[1]), "BTC": Path(sys.argv[2])}
-    code_only = await replay(paths, None)
     settings = Settings()
+    sections = []
     async with AsyncTypeSafeClient(
         api_key=settings.typesafe_api_key.get_secret_value(), model=settings.jev_model
     ) as client:
         judge = CachedJev(client)
-        with_jev = await replay(paths, judge)
+        for style in (FAST, SLOW):
+            every = f"every {style.decide_every_s:g} s"
+            name = f"{style.name.upper()} ({every})"
+            sections += section(f"{name}: code rules only", await replay(paths, None, style))
+            sections += section(f"{name}: code rules + Jev", await replay(paths, judge, style))
     cost = judge.tokens * settings.jev_usd_per_mtok / 1e6
     lines = [
         "# AAVE gatekeeper replay",
@@ -189,8 +195,7 @@ async def main() -> None:
         "",
         f"New Jev calls this run: {judge.calls} (${cost:.4f}); cached answers are reused.",
         "",
-        *section("Code rules only", code_only),
-        *section("Code rules + Jev", with_jev),
+        *sections,
     ]
     out = Path("docs/gatekeeper_replay.md")
     out.write_text("\n".join(lines))
