@@ -1,0 +1,16 @@
+[Unit]
+Description=jev-trader AAVE + BTC order-book recorder (24/7)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/jav trading/jev-trader
+Environment=PATH=/home/ubuntu/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/bin/bash "/home/ubuntu/jav trading/jev-trader/deploy/record_loop.sh"
+Restart=always
+RestartSec=30
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target
