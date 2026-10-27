@@ -67,6 +67,55 @@ launchctl bootout   gui/$(id -u)/com.jevtrader.live                             
 The Mac must stay awake: `caffeinate -s` in a terminal, or System Settings >
 Battery > prevent sleeping when the display is off.
 
+## Record market data 24/7 (Linux)
+
+The Phase 7 replays need AAVE + BTC books and trades with no gaps. On Linux the
+recorder runs under systemd instead of launchd:
+
+```bash
+sudo cp deploy/jev-recorder.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now jev-recorder
+systemctl status jev-recorder --no-pager
+journalctl -u jev-recorder -f        # "starting pair ...", "archived ...", errors
+```
+
+`deploy/record_loop.sh` records both coins together and rotates at **UTC midnight**:
+
+- one file pair per day: `data/rec/AAVE_<YYYYMMDD-HHMMSS>.jsonl`, `BTC_...`
+- at midnight each file is gzipped to `.jsonl.gz`; `scripts/slow_replay.py` and
+  `gatekeeper/tape.merged_records` read the archives in place, so do not gunzip by hand
+- if one recorder dies, the pair is stopped (never one coin writing alone) and retried
+  after 30 s, 60 s, ... up to 5 min
+- `KEEP_DAYS=21` deletes only archives older than 21 days
+- below `MIN_FREE_MB=1024` free it **stops starting pairs** and says so in the journal;
+  it never deletes a recent day to make room. A full disk must be fixed by finding the
+  real consumer: `sudo du -xh / | sort -h | tail -20`
+
+Disk budget: ~9 MB per day for the gzipped pair, ~130 MB for two weeks.
+
+Daily health check. It restarts the unit when it is down, or when it is active but no
+record has been written for 5 minutes, and appends the state to
+`data/recorder_health.log`:
+
+```bash
+chmod +x deploy/check_recorder.sh
+crontab -e   # add:
+30 22 * * * "/home/ubuntu/jav trading/jev-trader/deploy/check_recorder.sh" >> "/home/ubuntu/jav trading/jev-trader/data/recorder_health.log" 2>&1
+```
+
+Verify a recording by hand: `tail -c 300 data/rec/BTC_*.jsonl` should end with a record
+whose `ts` is the current Unix time (`date +%s`).
+
+Troubleshooting:
+
+| Symptom | Do this |
+|---|---|
+| `No space left on device` in the journal | Find the consumer (`sudo du -xh /`, largest at the bottom), free it; the loop resumes on its next retry. It will not delete recent days. |
+| Unit active, files not growing | `journalctl -u jev-recorder -n 50`; check the network; `sudo systemctl restart jev-recorder`. |
+| Disk full, nothing to delete | Growing the EBS volume is online; or lower `KEEP_DAYS`, never the current days. |
+| Want other coins / a fixed length | `sudo systemctl edit jev-recorder`, add `Environment=COINS="AAVE BTC"` or `Environment=MINUTES=60`. |
+
 ## Secrets
 
 - Keys live only in `.env` (git-ignored). `live` refuses to start unless it is `chmod 600`.

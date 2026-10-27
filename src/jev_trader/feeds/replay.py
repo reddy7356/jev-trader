@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import gzip
 import json
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from pathlib import Path
 
 from jev_trader.state.book import Level, OrderBook
@@ -16,6 +18,27 @@ def book_from_record(rec: dict, ts: float) -> OrderBook:
         bids=tuple(Level(px, sz) for px, sz in rec["bids"]),
         asks=tuple(Level(px, sz) for px, sz in rec["asks"]),
     )
+
+
+def read_records(path: Path) -> Iterator[dict]:
+    """Records from a JSONL recording, plain or gzipped.
+
+    `record_loop.sh` gzips each finished day (`*.jsonl.gz`), so every replay path
+    has to accept both forms; gzip is detected by the suffix, not the content.
+
+    One line is held back so a partial last line — a recorder killed mid-write, or a
+    file read while it is still being appended — is dropped instead of raising.
+    """
+    opener = gzip.open if path.suffix == ".gz" else open
+    with opener(path, "rt", encoding="utf-8") as lines:
+        previous: str | None = None
+        for line in lines:
+            if previous is not None and previous.strip():
+                yield json.loads(previous)
+            previous = line
+        if previous is not None and previous.strip():
+            with contextlib.suppress(json.JSONDecodeError):
+                yield json.loads(previous)
 
 
 class ReplayFeed:
@@ -36,7 +59,7 @@ class ReplayFeed:
         self._realtime = realtime
 
     async def events(self) -> AsyncIterator[BlockEvent]:
-        records = [json.loads(line) for line in self._path.read_text().splitlines() if line]
+        records = list(read_records(self._path))
         # trades at the same millisecond as a book print before it
         records.sort(key=lambda r: (r["ts"], r["kind"] == "book"))
         books = [r for r in records if r["kind"] == "book"]

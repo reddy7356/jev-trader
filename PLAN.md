@@ -236,7 +236,15 @@ warnings and a hand-kept US event calendar (8:15–10:30 ET daily, CPI/jobs/ISM/
         demand 0.39-0.82; the 4 trades it rated >= 0.8 all lost). SLOW code only: 3 trades,
         +$29.39 (too few to judge); SLOW + Jev: 0 trades. Keep the 0.8 rule for now
 - [ ] SLOW style (hours-scale clock, same rules) — built; judge it on the 2-week recording
-- [ ] 2-week AAVE + BTC recording (`data/rec2w/`, daily files) — Sun 10-04 to Sun 10-18
+- [ ] 2-week AAVE + BTC recording — the Mac run Sun 10-04..Sun 10-18 (`data/rec2w/`) was
+      32% missing (sleep gaps), so SLOW is still unjudged. Re-recording on the Linux box
+      since 2026-10-27 (`data/rec/`, UTC-daily pairs, `jev-recorder.service`; see
+      `docs/runbook.md`), ends 2026-11-10. The 10-21..10-26 files were lost on 10-27 when
+      an unrelated npm install filled the disk and the old retention rule deleted them;
+      retention is now age-based and never touches recent days.
+- [x] Recorder that survives a 24/7 run: UTC-midnight rotation, gzip archives that
+      `slow_replay.py` reads directly, backoff, pre-flight disk check, daily health check
+      — `deploy/record_loop.sh`, `deploy/check_recorder.sh`, `deploy/jev-recorder.service`
 - [ ] Live paper sessions only if the replay beats fees
 
 **Acceptance:** on replay and then live paper, losing trades stay at <= 1R, most sessions

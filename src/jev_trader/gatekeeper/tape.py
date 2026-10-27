@@ -10,12 +10,13 @@ from __future__ import annotations
 
 import heapq
 import itertools
-import json
 import statistics
 from collections import deque
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+
+from jev_trader.feeds.replay import read_records
 
 HISTORY_S = 4 * 3600.0  # SLOW style: 13 x 15-min volume periods = 3.25 h
 SNAPSHOT_EVERY_S = 30.0
@@ -166,16 +167,14 @@ def fill_price(levels: list, quantity: float) -> float:
 def merged_records(paths: dict[str, Path]) -> Iterator[tuple[str, dict]]:
     """(coin, record) from several recordings, merged in time order.
 
-    Streams line by line (a 3-day recording is ~300 MB). Each file is in arrival
-    order, which is time order to within milliseconds: fine for 30 s / 5 min rules.
+    Streams line by line (a 3-day recording is ~300 MB) and reads `.jsonl.gz`
+    archives as well as plain files. Each file is in arrival order, which is time
+    order to within milliseconds: fine for 30 s / 5 min rules.
     """
 
     def one(coin: str, path: Path) -> Iterator[tuple[float, str, dict]]:
-        with path.open() as lines:
-            for line in lines:
-                if line.strip():
-                    record = json.loads(line)
-                    yield record["ts"], coin, record
+        for record in read_records(path):
+            yield record["ts"], coin, record
 
     streams = [one(coin, path) for coin, path in paths.items()]
     for _, coin, record in heapq.merge(*streams, key=lambda row: row[0]):

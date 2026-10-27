@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import json
 
 import pytest
@@ -76,6 +77,27 @@ def test_fill_price_walks_the_book():
     assert fill_price(asks, 0.5) == 100.0
     assert fill_price(asks, 2.0) == pytest.approx(100.5)
     assert fill_price(asks, 4.0) == pytest.approx((100 + 101 + 2 * 102) / 4)
+
+
+def test_merged_records_reads_archives_and_merges_in_time_order(tmp_path):
+    def rec(ts):
+        return {"kind": "book", "ts": ts, "bids": [[100.0, 1.0]], "asks": [[100.1, 1.0]]}
+
+    def lines(times):
+        return "\n".join(json.dumps(rec(ts)) for ts in times) + "\n"
+
+    aave = tmp_path / "AAVE_20261020-0000.jsonl"
+    aave.write_text(lines([1.0, 3.0]))
+    btc = tmp_path / "BTC_20261020-0000.jsonl.gz"  # finished days are archived gzipped
+    btc.write_bytes(gzip.compress(lines([2.0, 4.0]).encode()))
+
+    rows = list(merged_records({"AAVE": aave, "BTC": btc}))
+    assert [(coin, record["ts"]) for coin, record in rows] == [
+        ("AAVE", 1.0),
+        ("BTC", 2.0),
+        ("AAVE", 3.0),
+        ("BTC", 4.0),
+    ]
 
 
 def test_timeline_with_longer_steps_skips_in_between_snapshots():

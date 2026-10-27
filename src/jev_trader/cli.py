@@ -377,9 +377,6 @@ def _run_record(args: argparse.Namespace) -> int:
     print(f"done: {books} books")
     return 0
 
-if __name__ == "__main__":
-    raise SystemExit(main())
-
 
 if __name__ == "__main__":
     raise SystemExit(main())
