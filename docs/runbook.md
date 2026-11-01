@@ -74,11 +74,17 @@ recorder runs under systemd instead of launchd:
 
 ```bash
 sudo cp deploy/jev-recorder.service /etc/systemd/system/
+sudo mkdir -p /etc/systemd/system/jev-recorder.service.d
+sudo cp deploy/jev-recorder.service.d/override.conf /etc/systemd/system/jev-recorder.service.d/
 sudo systemctl daemon-reload
 sudo systemctl enable --now jev-recorder
 systemctl status jev-recorder --no-pager
 journalctl -u jev-recorder -f        # "starting pair ...", "archived ...", errors
 ```
+
+The drop-in sets `REC_DIR=/data/jev-rec/rec` so the recordings never land on the
+root volume; drop it and the recorder writes to the 8 GB disk that also holds the
+toolchain.
 
 `deploy/record_loop.sh` records both coins together and rotates at **UTC midnight**:
 
@@ -92,7 +98,26 @@ journalctl -u jev-recorder -f        # "starting pair ...", "archived ...", erro
   it never deletes a recent day to make room. A full disk must be fixed by finding the
   real consumer: `sudo du -xh / | sort -h | tail -20`
 
-Disk budget: ~9 MB per day for the gzipped pair, ~130 MB for two weeks.
+Disk budget: ~9 MB per day for the gzipped pair, ~130 MB for two weeks — the
+recordings are never what fills a volume.
+
+Where the files live. `REC_DIR` (the systemd drop-in) is `/data/jev-rec/rec`, on the
+100 GB data volume in `/etc/fstab` (`nofail`), **not** the 8 GB root volume.
+`data/rec` in the repo is a symlink to it, so every path in this runbook,
+`scripts/slow_replay.py` and `deploy/check_recorder.sh` keep resolving. After a
+fresh checkout, recreate the link and prove the volume is mounted:
+
+```bash
+sudo mkdir -p /data/jev-rec/rec && sudo chown ubuntu: /data/jev-rec/rec
+ln -sfn /data/jev-rec/rec data/rec
+readlink -f data/rec && findmnt /data     # a dangling link means /data is not mounted
+```
+
+A full `/` is the toolchain, not the recorder: `~/.nvm` 1.8 G, `~/.npm` 700 M,
+`/var/lib/snapd` 423 M. `npm cache clean --force`,
+`sudo snap set system refresh.retain=2` and `sudo journalctl --vacuum-size=50M` are
+all safe. `deploy/check_recorder.sh` prints the free space of the *recording*
+volume, so a full `/` no longer reads as a recorder fault.
 
 Daily health check. It restarts the unit when it is down, or when it is active but no
 record has been written for 5 minutes, and appends the state to
@@ -111,9 +136,10 @@ Troubleshooting:
 
 | Symptom | Do this |
 |---|---|
-| `No space left on device` in the journal | Find the consumer (`sudo du -xh /`, largest at the bottom), free it; the loop resumes on its next retry. It will not delete recent days. |
+| `No space left on device` in the journal | Check both filesystems: `df -h /` and `df -h data/rec`. If `/` is full the recorder is not the consumer — `sudo du -xh / \| sort -h \| tail -20` (usually `~/.nvm`, `~/.npm`, `/var/lib/snapd`); `npm cache clean --force` and `sudo journalctl --vacuum-size=50M` are safe. The loop resumes on its next retry and will not delete recent days. |
 | Unit active, files not growing | `journalctl -u jev-recorder -n 50`; check the network; `sudo systemctl restart jev-recorder`. |
-| Disk full, nothing to delete | Growing the EBS volume is online; or lower `KEEP_DAYS`, never the current days. |
+| Disk full, nothing to delete | Growing an EBS volume is online in AWS but **manual inside the guest**: `sudo growpart /dev/nvme0n1 1 && sudo resize2fs /dev/nvme0n1p1` — ext4 never auto-extends. Attaching a second volume does not enlarge `/`. Or lower `KEEP_DAYS`, never the current days. |
+| Files exist but `data/rec` looks empty | `readlink -f data/rec` and `findmnt /data`: the symlink to `/data/jev-rec/rec` is missing, or the `nofail` data volume is not mounted and the writers landed somewhere unexpected. |
 | Want other coins / a fixed length | `sudo systemctl edit jev-recorder`, add `Environment=COINS="AAVE BTC"` or `Environment=MINUTES=60`. |
 
 ## Secrets

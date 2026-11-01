@@ -7,6 +7,10 @@ set -uo pipefail
 
 cd "$(dirname "$0")/.." || exit 1
 
+# Resolve to the same directory the unit writes to (Environment=REC_DIR in the
+# systemd drop-in). `data/rec` is a symlink to /data/jev-rec/rec on this host, so the
+# repo-relative default keeps this check and the recorder in agreement: a check that
+# looks at a different directory calls a healthy pair stale and restarts it.
 REC_DIR=${REC_DIR:-data/rec}
 STALE_S=${STALE_S:-300}
 
@@ -19,7 +23,11 @@ if [ "$unit" != "active" ]; then
   unit=$(systemctl is-active jev-recorder 2>/dev/null)
 fi
 
-echo "Disk:      $(df -h . | awk 'NR==2 {print $4 " free (" $5 " used)"}')"
+# Report the filesystem the recordings actually live on: `df .` would print the repo
+# volume (the root disk), which is what makes a full `/` look like a recorder problem.
+rec_real=$(readlink -f "$REC_DIR" 2>/dev/null)
+echo "Record dir: ${rec_real:-$REC_DIR}"
+echo "Disk:      $(df -h "$REC_DIR" 2>/dev/null | awk 'NR==2 {print $4 " free (" $5 " used) on " $1}')"
 newest=$(ls -1t "$REC_DIR"/*.jsonl 2>/dev/null | head -1)
 if [ -z "$newest" ]; then
   age=999999
